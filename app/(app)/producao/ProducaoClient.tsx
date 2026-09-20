@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, Pencil } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getLotesProducao,
@@ -12,6 +12,7 @@ import {
   removeInsumoFromLote,
   updateInsumoLote,
   updateLoteStatus,
+  updateLote,
   getFormulasList,
   getFormulaInsumos,
   getInsumosList,
@@ -30,6 +31,8 @@ type ModalType =
   | "excluirLote";
 
 type InsumoBasic = { id: string; nome: string; unidade: string };
+
+type EditableInsumo = { insumo_id: string; nome: string; quantidade: number; unidade: string };
 
 const INSUMO_UNIDADES = ["KG", "L", "G", "ML", "PCT", "UN"];
 
@@ -180,8 +183,10 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function ProducaoClient({
   initialLotes,
+  isAdmin,
 }: {
   initialLotes: LoteWithFormula[];
+  isAdmin?: boolean;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -204,6 +209,7 @@ export default function ProducaoClient({
   const [novoNumeroLote, setNovoNumeroLote] = useState("");
   const [novoData, setNovoData] = useState(todayStr());
   const [formulaInsumosPreview, setFormulaInsumosPreview] = useState<FormulaInsumoPreview[]>([]);
+  const [editableInsumos, setEditableInsumos] = useState<EditableInsumo[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
 
   // Adicionar Insumo modal state
@@ -225,6 +231,13 @@ export default function ProducaoClient({
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [inlineSaving, setInlineSaving] = useState(false);
 
+  // Lote header inline edit state
+  const [editingLoteHeader, setEditingLoteHeader] = useState(false);
+  const [editNumeroLote, setEditNumeroLote] = useState("");
+  const [editDataProducao, setEditDataProducao] = useState("");
+  const [loteEditSaving, setLoteEditSaving] = useState(false);
+  const [loteEditError, setLoteEditError] = useState<string | null>(null);
+
   // ── Helpers ──
 
   function refresh() {
@@ -238,6 +251,7 @@ export default function ProducaoClient({
     setNovoNumeroLote("");
     setNovoData(todayStr());
     setFormulaInsumosPreview([]);
+    setEditableInsumos([]);
     setSelInsumoId("");
     setInsQtd("");
     setInsUnidade("KG");
@@ -274,6 +288,8 @@ export default function ProducaoClient({
   async function selectLote(id: string) {
     setSelectedId(id);
     setMobileSidebarOpen(false);
+    setEditingLoteHeader(false);
+    setLoteEditError(null);
     await loadDetail(id);
   }
 
@@ -332,9 +348,16 @@ export default function ProducaoClient({
     }
     setPreviewLoading(true);
     setFormulaInsumosPreview([]);
+    setEditableInsumos([]);
     try {
       const preview = await getFormulaInsumos(formulaId);
       setFormulaInsumosPreview(preview);
+      setEditableInsumos(preview.map((fi) => ({
+        insumo_id: fi.insumo_id,
+        nome: fi.insumos?.nome ?? "—",
+        quantidade: fi.quantidade,
+        unidade: fi.unidade,
+      })));
     } catch {
       // preview is optional
     } finally {
@@ -397,7 +420,8 @@ export default function ProducaoClient({
     setInlineError(null);
     setInlineSaving(true);
     try {
-      const newLote = await createLote(selFormulaId, novoNumeroLote.trim(), novoData);
+      const overrides = isAdmin && editableInsumos.length > 0 ? editableInsumos : undefined;
+      const newLote = await createLote(selFormulaId, novoNumeroLote.trim(), novoData, overrides);
       await refreshLotes();
       refresh();
       setSelectedId(newLote.id);
@@ -483,6 +507,31 @@ export default function ProducaoClient({
     } catch (e) {
       setDetailError(e instanceof Error ? e.message : "Erro ao atualizar status.");
       setActionLoading(false);
+    }
+  }
+
+  async function handleSaveLoteHeader() {
+    if (!selectedId) return;
+    if (!editNumeroLote.trim()) return setLoteEditError("Número do lote é obrigatório.");
+    if (!editDataProducao) return setLoteEditError("Data é obrigatória.");
+    setLoteEditError(null);
+    setLoteEditSaving(true);
+    try {
+      const updated = await updateLote(selectedId, editNumeroLote.trim(), editDataProducao);
+      setLotes((prev) =>
+        prev.map((l) =>
+          l.id === selectedId
+            ? { ...l, numero_lote: updated.numero_lote, data_producao: updated.data_producao }
+            : l
+        )
+      );
+      refresh();
+      await reloadDetail();
+      setEditingLoteHeader(false);
+    } catch (e) {
+      setLoteEditError(e instanceof Error ? e.message : "Erro ao salvar.");
+    } finally {
+      setLoteEditSaving(false);
     }
   }
 
@@ -695,46 +744,61 @@ export default function ProducaoClient({
                         <table className="w-full text-xs">
                           <thead>
                             <tr style={{ backgroundColor: "#E3F2FD" }}>
-                              <th
-                                className="text-left px-3 py-2 font-semibold"
-                                style={{ color: "#1565C0" }}
-                              >
-                                Insumo
-                              </th>
-                              <th
-                                className="text-left px-3 py-2 font-semibold"
-                                style={{ color: "#1565C0" }}
-                              >
-                                Qtd
-                              </th>
-                              <th
-                                className="text-left px-3 py-2 font-semibold"
-                                style={{ color: "#1565C0" }}
-                              >
-                                Un.
-                              </th>
+                              <th className="text-left px-3 py-2 font-semibold" style={{ color: "#1565C0" }}>Insumo</th>
+                              <th className="text-left px-3 py-2 font-semibold" style={{ color: "#1565C0" }}>Qtd</th>
+                              <th className="text-left px-3 py-2 font-semibold" style={{ color: "#1565C0" }}>Un.</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {formulaInsumosPreview.map((fi, idx) => (
-                              <tr
-                                key={fi.id}
-                                style={{
-                                  backgroundColor:
-                                    idx % 2 === 0 ? "#F0F7FF" : "#ffffff",
-                                }}
-                              >
-                                <td className="px-3 py-2 text-gray-700">
-                                  {fi.insumos?.nome ?? "—"}
-                                </td>
-                                <td className="px-3 py-2 text-gray-600">
-                                  {fi.quantidade}
-                                </td>
-                                <td className="px-3 py-2 text-gray-600">
-                                  {fi.unidade}
-                                </td>
-                              </tr>
-                            ))}
+                            {isAdmin
+                              ? editableInsumos.map((item, idx) => (
+                                  <tr key={item.insumo_id} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
+                                    <td className="px-3 py-2 text-gray-700">{item.nome}</td>
+                                    <td className="px-3 py-2">
+                                      <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        value={item.quantidade}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setEditableInsumos((prev) =>
+                                            prev.map((ei, i) =>
+                                              i === idx ? { ...ei, quantidade: parseFloat(val) || 0 } : ei
+                                            )
+                                          );
+                                        }}
+                                        className="border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                                        style={{ maxWidth: 100 }}
+                                      />
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <select
+                                        value={item.unidade}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setEditableInsumos((prev) =>
+                                            prev.map((ei, i) =>
+                                              i === idx ? { ...ei, unidade: val } : ei
+                                            )
+                                          );
+                                        }}
+                                        className="border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                                      >
+                                        {INSUMO_UNIDADES.map((u) => (
+                                          <option key={u} value={u}>{u}</option>
+                                        ))}
+                                      </select>
+                                    </td>
+                                  </tr>
+                                ))
+                              : formulaInsumosPreview.map((fi, idx) => (
+                                  <tr key={fi.id} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
+                                    <td className="px-3 py-2 text-gray-700">{fi.insumos?.nome ?? "—"}</td>
+                                    <td className="px-3 py-2 text-gray-600">{fi.quantidade}</td>
+                                    <td className="px-3 py-2 text-gray-600">{fi.unidade}</td>
+                                  </tr>
+                                ))
+                            }
                           </tbody>
                         </table>
                       </div>
@@ -796,18 +860,78 @@ export default function ProducaoClient({
                   >
                     {detail.formulas?.nome ?? "—"}
                   </h2>
-                  <span
-                    className="px-2 py-0.5 rounded text-xs font-bold tracking-wider"
-                    style={{ backgroundColor: "#E3F2FD", color: "#1565C0" }}
-                  >
-                    {detail.numero_lote}
-                  </span>
-                  <StatusBadge status={detail.status} />
+                  {editingLoteHeader ? (
+                    <input
+                      className="border border-blue-300 rounded px-2 py-1 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      style={{ color: "#1565C0", maxWidth: 160 }}
+                      maxLength={10}
+                      value={editNumeroLote}
+                      onChange={(e) => setEditNumeroLote(e.target.value)}
+                    />
+                  ) : (
+                    <>
+                      <span
+                        className="px-2 py-0.5 rounded text-xs font-bold tracking-wider"
+                        style={{ backgroundColor: "#E3F2FD", color: "#1565C0" }}
+                      >
+                        {detail.numero_lote}
+                      </span>
+                      <StatusBadge status={detail.status} />
+                      {isAdmin && detail.status === "producao" && (
+                        <button
+                          onClick={() => {
+                            setEditNumeroLote(detail.numero_lote);
+                            setEditDataProducao(detail.data_producao);
+                            setLoteEditError(null);
+                            setEditingLoteHeader(true);
+                          }}
+                          className="p-1 rounded hover:bg-blue-50 transition"
+                          style={{ color: "#1565C0" }}
+                          title="Editar lote"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
-                <p className="text-sm text-gray-500 mt-1">
-                  Data de produção:{" "}
-                  <strong>{detail.data_producao}</strong>
-                </p>
+                {editingLoteHeader ? (
+                  <div className="flex items-center gap-3 mt-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm text-gray-500">Data:</label>
+                      <input
+                        type="date"
+                        className="border border-blue-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        value={editDataProducao}
+                        onChange={(e) => setEditDataProducao(e.target.value)}
+                      />
+                    </div>
+                    {loteEditError && (
+                      <span className="text-xs text-red-600">{loteEditError}</span>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleSaveLoteHeader}
+                        disabled={loteEditSaving}
+                        className="px-3 py-1 rounded text-white text-xs font-semibold hover:brightness-110 transition disabled:opacity-60"
+                        style={{ backgroundColor: "#2E7D32" }}
+                      >
+                        {loteEditSaving ? "Salvando..." : "✓ Salvar"}
+                      </button>
+                      <button
+                        onClick={() => { setEditingLoteHeader(false); setLoteEditError(null); }}
+                        className="px-3 py-1 rounded text-xs font-semibold border border-gray-300 text-gray-600 hover:bg-gray-50 transition"
+                      >
+                        ✗ Cancelar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 mt-1">
+                    Data de produção:{" "}
+                    <strong>{detail.data_producao}</strong>
+                  </p>
+                )}
               </div>
               <div className="flex gap-2 flex-wrap flex-shrink-0">
                 {detail.status === "producao" && (

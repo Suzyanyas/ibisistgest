@@ -12,6 +12,38 @@ export type LoteEnvaseWithFormula = Tables<"lotes_producao"> & {
   > | null;
 };
 
+export type HistoricoEnvaseItem = Tables<"lotes_producao"> & {
+  formulas: Pick<
+    Tables<"formulas">,
+    "nome" | "sigla" | "rendimento" | "rendimento_unidade"
+  > | null;
+  envases: Pick<
+    Tables<"envases">,
+    "qtd_1l" | "qtd_2l" | "qtd_5l" | "qtd_20l" | "rendimento_real" | "data_envase"
+  >[];
+};
+
+export async function getHistoricoEnvases(): Promise<HistoricoEnvaseItem[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("lotes_producao")
+    .select(
+      "*, formulas(nome, sigla, rendimento, rendimento_unidade), envases(qtd_1l, qtd_2l, qtd_5l, qtd_20l, rendimento_real, data_envase)"
+    )
+    .eq("status", "concluido")
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  const withEnvase = ((data ?? []) as HistoricoEnvaseItem[]).filter(
+    (l) => l.envases && l.envases.length > 0
+  );
+  withEnvase.sort((a, b) => {
+    const da = a.envases[0]?.data_envase ?? "";
+    const db = b.envases[0]?.data_envase ?? "";
+    return db.localeCompare(da);
+  });
+  return withEnvase;
+}
+
 export async function getLotesEnvase(): Promise<LoteEnvaseWithFormula[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -47,19 +79,40 @@ export async function saveEnvase(
   const supabase = await createClient();
   // datetime-local returns "YYYY-MM-DDTHH:mm" without timezone; treat as local and convert to ISO
   const data_envase_iso = new Date(data_envase).toISOString();
+  const rendimento_real = qtd_1l * 1 + qtd_2l * 2 + qtd_5l * 5 + qtd_20l * 20;
   const existing = await getEnvaseByLote(lote_id);
   if (existing) {
     const { error } = await supabase
       .from("envases")
-      .update({ qtd_1l, qtd_2l, qtd_5l, qtd_20l, data_envase: data_envase_iso })
+      .update({ qtd_1l, qtd_2l, qtd_5l, qtd_20l, data_envase: data_envase_iso, rendimento_real })
       .eq("id", existing.id);
     if (error) throw new Error(error.message);
   } else {
     const { error } = await supabase
       .from("envases")
-      .insert({ lote_id, qtd_1l, qtd_2l, qtd_5l, qtd_20l, data_envase: data_envase_iso });
+      .insert({ lote_id, qtd_1l, qtd_2l, qtd_5l, qtd_20l, data_envase: data_envase_iso, rendimento_real });
     if (error) throw new Error(error.message);
   }
+}
+
+export type LoteInsumoItem = {
+  nome: string;
+  quantidade: number;
+  unidade: string;
+};
+
+export async function getLoteInsumos(lote_id: string): Promise<LoteInsumoItem[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("lote_insumos")
+    .select("quantidade, unidade, insumos(nome)")
+    .eq("lote_id", lote_id);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Array<{ quantidade: number; unidade: string | null; insumos: { nome: string } | null }>).map((row) => ({
+    nome: row.insumos?.nome ?? "—",
+    quantidade: row.quantidade,
+    unidade: row.unidade ?? "",
+  }));
 }
 
 export async function concluirEnvase(lote_id: string): Promise<void> {

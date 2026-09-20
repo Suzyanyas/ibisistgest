@@ -18,6 +18,14 @@ export type LoteConcluidoWithFormula = Tables<"lotes_producao"> & {
   formulas: Pick<Tables<"formulas">, "nome" | "sigla"> | null;
 };
 
+export type HistoricoProdutoItem = Tables<"lotes_producao"> & {
+  formulas: Pick<Tables<"formulas">, "nome" | "sigla"> | null;
+  envases: Pick<
+    Tables<"envases">,
+    "qtd_1l" | "qtd_2l" | "qtd_5l" | "qtd_20l" | "rendimento_real" | "data_envase"
+  >[];
+};
+
 export async function getProdutosAcabados(): Promise<ProdutoAcabadoWithFlag[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -96,4 +104,28 @@ export async function getLotesConcluidos(): Promise<LoteConcluidoWithFormula[]> 
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as LoteConcluidoWithFormula[];
+}
+
+export async function getHistoricoProduto(
+  produto_nome: string
+): Promise<HistoricoProdutoItem[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("lotes_producao")
+    .select(
+      "*, formulas!inner(nome, sigla), envases(qtd_1l, qtd_2l, qtd_5l, qtd_20l, rendimento_real, data_envase)"
+    )
+    .eq("status", "concluido")
+    .eq("formulas.nome", produto_nome)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  const withEnvase = ((data ?? []) as HistoricoProdutoItem[]).filter(
+    (l) => l.envases && l.envases.length > 0
+  );
+  withEnvase.sort((a, b) => {
+    const da = a.envases[0]?.data_envase ?? "";
+    const db = b.envases[0]?.data_envase ?? "";
+    return db.localeCompare(da);
+  });
+  return withEnvase;
 }

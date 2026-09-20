@@ -52,7 +52,8 @@ export async function getLoteWithInsumos(id: string): Promise<LoteWithDetails> {
 export async function createLote(
   formula_id: string,
   numero_lote: string,
-  data_producao: string
+  data_producao: string,
+  insumoOverrides?: Array<{ insumo_id: string; quantidade: number; unidade: string }>
 ): Promise<LoteRow> {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -63,19 +64,30 @@ export async function createLote(
   if (error) throw new Error(error.message);
   const lote = data;
 
-  const { data: formulaInsumos, error: fiError } = await supabase
-    .from("formula_insumos")
-    .select("insumo_id, quantidade, unidade")
-    .eq("formula_id", formula_id);
-  if (fiError) throw new Error(fiError.message);
+  let inserts: Array<{ lote_id: string; insumo_id: string; quantidade: number; unidade: string }>;
 
-  if (formulaInsumos && formulaInsumos.length > 0) {
-    const inserts = formulaInsumos.map((fi) => ({
+  if (insumoOverrides && insumoOverrides.length > 0) {
+    inserts = insumoOverrides.map((o) => ({
+      lote_id: lote.id,
+      insumo_id: o.insumo_id,
+      quantidade: o.quantidade,
+      unidade: o.unidade,
+    }));
+  } else {
+    const { data: formulaInsumos, error: fiError } = await supabase
+      .from("formula_insumos")
+      .select("insumo_id, quantidade, unidade")
+      .eq("formula_id", formula_id);
+    if (fiError) throw new Error(fiError.message);
+    inserts = (formulaInsumos ?? []).map((fi) => ({
       lote_id: lote.id,
       insumo_id: fi.insumo_id,
       quantidade: fi.quantidade,
       unidade: fi.unidade,
     }));
+  }
+
+  if (inserts.length > 0) {
     const { error: insertError } = await supabase
       .from("lote_insumos")
       .insert(inserts);
@@ -203,6 +215,22 @@ export async function getFormulaInsumos(
     .eq("formula_id", formula_id);
   if (error) throw new Error(error.message);
   return (data ?? []) as unknown as FormulaInsumoPreview[];
+}
+
+export async function updateLote(
+  id: string,
+  numero_lote: string,
+  data_producao: string
+): Promise<LoteRow> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("lotes_producao")
+    .update({ numero_lote, data_producao })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 export async function getInsumosList() {

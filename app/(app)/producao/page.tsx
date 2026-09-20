@@ -4,9 +4,10 @@ import ProducaoClient from "./ProducaoClient";
 
 export default async function ProducaoPage() {
   const lotes = await getLotesProducao();
+  // TODO: restore auth before delivery
   return (
     <Suspense>
-      <ProducaoClient initialLotes={lotes} />
+      <ProducaoClient initialLotes={lotes} isAdmin={true} />
     </Suspense>
   );
 }

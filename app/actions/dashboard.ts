@@ -85,7 +85,8 @@ export async function getLotesEmEnvase(): Promise<LoteEnvaseItem[]> {
     .from("lotes_producao")
     .select("*, formulas(nome, sigla)")
     .eq("status", "envase")
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(6);
   if (error) throw new Error(error.message);
   return (data ?? []) as LoteEnvaseItem[];
 }

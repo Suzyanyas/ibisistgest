@@ -6,9 +6,23 @@ import {
   getEnvaseByLote,
   saveEnvase,
   concluirEnvase,
+  getHistoricoEnvases,
+  getLoteInsumos,
   type LoteEnvaseWithFormula,
   type EnvaseRow,
+  type HistoricoEnvaseItem,
+  type LoteInsumoItem,
 } from "@/app/actions/envase";
+
+function formatDataEnvase(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return (
+    d.toLocaleDateString("pt-BR") +
+    " " +
+    d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+  );
+}
 
 function nowStr() {
   return new Date().toISOString().slice(0, 16);
@@ -44,6 +58,11 @@ export default function EnvaseClient({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(true);
 
+  const [activeTab, setActiveTab] = useState<"em_curso" | "historico">("em_curso");
+  const [historico, setHistorico] = useState<HistoricoEnvaseItem[] | null>(null);
+  const [historicoLoading, setHistoricoLoading] = useState(false);
+  const [historicoError, setHistoricoError] = useState<string | null>(null);
+
   useEffect(() => {
     const loteId = searchParams.get("lote_id");
     if (loteId && initialLotes.some((l) => l.id === loteId)) {
@@ -58,6 +77,10 @@ export default function EnvaseClient({
   const [qtd5l, setQtd5l] = useState(0);
   const [qtd20l, setQtd20l] = useState(0);
   const [dataEnvase, setDataEnvase] = useState(nowStr());
+
+  const [insumosOpen, setInsumosOpen] = useState(false);
+  const [insumosCache, setInsumosCache] = useState<Record<string, LoteInsumoItem[]>>({});
+  const [insumosLoading, setInsumosLoading] = useState(false);
 
   const [formLoading, setFormLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -100,6 +123,7 @@ export default function EnvaseClient({
   );
 
   useEffect(() => {
+    setInsumosOpen(false);
     if (selectedId) {
       loadEnvase(selectedId);
     } else {
@@ -137,192 +161,378 @@ export default function EnvaseClient({
     }
   }
 
+  async function handleToggleInsumos() {
+    if (!selectedId) return;
+    if (!insumosOpen && !insumosCache[selectedId]) {
+      setInsumosLoading(true);
+      try {
+        const data = await getLoteInsumos(selectedId);
+        setInsumosCache((prev) => ({ ...prev, [selectedId]: data }));
+      } catch {
+        // silently ignore; table may show empty
+        setInsumosCache((prev) => ({ ...prev, [selectedId]: [] }));
+      } finally {
+        setInsumosLoading(false);
+      }
+    }
+    setInsumosOpen((o) => !o);
+  }
+
   const totalUnidades = qtd1l + qtd2l + qtd5l + qtd20l;
   const atLeastOneQtd = qtd1l > 0 || qtd2l > 0 || qtd5l > 0 || qtd20l > 0;
+  const rendimentoReal = qtd1l * 1 + qtd2l * 2 + qtd5l * 5 + qtd20l * 20;
+
+  async function handleSelectHistorico() {
+    setActiveTab("historico");
+    if (historico !== null) return;
+    setHistoricoLoading(true);
+    setHistoricoError(null);
+    try {
+      const data = await getHistoricoEnvases();
+      setHistorico(data);
+    } catch (e) {
+      setHistoricoError(e instanceof Error ? e.message : "Erro ao carregar histórico.");
+    } finally {
+      setHistoricoLoading(false);
+    }
+  }
 
   return (
-    <div className="flex" style={{ minHeight: "calc(100vh - 64px)" }}>
-      {/* Sidebar */}
-      <aside
-        className={`flex-shrink-0 flex-col border-r border-gray-200 bg-white md:flex ${mobileSidebarOpen ? "flex" : "hidden"}`}
-        style={{ width: 220 }}
+    <div style={{ minHeight: "calc(100vh - 64px)" }}>
+      {/* Tab bar */}
+      <div
+        className="flex border-b border-gray-200 bg-white"
+        style={{ paddingLeft: 24, paddingRight: 24, paddingTop: 0 }}
       >
-        <div
-          className="px-4 py-4 border-b border-blue-200"
-          style={{ backgroundColor: "#1565C0" }}
-        >
-          <span className="text-white font-semibold" style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 16, fontWeight: 600 }}>Envase</span>
-        </div>
-        <ul className="flex-1 overflow-y-auto py-2">
-          {lotes.length === 0 && (
-            <li className="px-4 py-3 text-gray-400 text-sm">
-              Nenhum lote em envase.
-            </li>
-          )}
-          {lotes.map((l) => {
-            const isActive = l.id === selectedId;
-            return (
-              <li key={l.id}>
-                <button
-                  onClick={() => { setSelectedId(l.id); setMobileSidebarOpen(false); }}
-                  className="w-full text-left text-sm transition"
-                  style={{
-                    backgroundColor: isActive ? "#1565C0" : "transparent",
-                    color: isActive ? "#ffffff" : "#1A3A6B",
-                    borderRadius: 8,
-                    padding: "12px 16px",
-                    fontWeight: isActive ? 600 : 400,
-                    margin: "0 4px",
-                    width: "calc(100% - 8px)",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div className="font-semibold truncate">
-                    {l.formulas?.nome ?? "—"}
-                  </div>
-                  <div
-                    className="text-xs mt-0.5"
-                    style={{ color: isActive ? "#BBDEFB" : "#607D8B" }}
+        {(["em_curso", "historico"] as const).map((tab) => {
+          const label = tab === "em_curso" ? "Em Curso" : "Histórico";
+          const isActive = activeTab === tab;
+          return (
+            <button
+              key={tab}
+              onClick={() => {
+                if (tab === "historico") handleSelectHistorico();
+                else setActiveTab("em_curso");
+              }}
+              className="relative px-5 py-3 text-sm font-semibold transition"
+              style={{
+                color: isActive ? "#1565C0" : "#607D8B",
+                borderBottom: isActive ? "2px solid #1565C0" : "2px solid transparent",
+                background: "none",
+                cursor: "pointer",
+                marginBottom: -1,
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Em Curso tab ── */}
+      {activeTab === "em_curso" && (
+        <div className="flex" style={{ minHeight: "calc(100vh - 64px - 45px)" }}>
+          {/* Sidebar */}
+          <aside
+            className={`flex-shrink-0 flex-col border-r border-gray-200 bg-white md:flex ${mobileSidebarOpen ? "flex" : "hidden"}`}
+            style={{ width: 220 }}
+          >
+            <div
+              className="px-4 py-4 border-b border-blue-200"
+              style={{ backgroundColor: "#1565C0" }}
+            >
+              <span className="text-white font-semibold" style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 16, fontWeight: 600 }}>Envase</span>
+            </div>
+            <ul className="flex-1 overflow-y-auto py-2">
+              {lotes.length === 0 && (
+                <li className="px-4 py-3 text-gray-400 text-sm">
+                  Nenhum lote em envase.
+                </li>
+              )}
+              {lotes.map((l) => {
+                const isActive = l.id === selectedId;
+                return (
+                  <li key={l.id}>
+                    <button
+                      onClick={() => { setSelectedId(l.id); setMobileSidebarOpen(false); }}
+                      className="w-full text-left text-sm transition"
+                      style={{
+                        backgroundColor: isActive ? "#1565C0" : "transparent",
+                        color: isActive ? "#ffffff" : "#1A3A6B",
+                        borderRadius: 8,
+                        padding: "12px 16px",
+                        fontWeight: isActive ? 600 : 400,
+                        margin: "0 4px",
+                        width: "calc(100% - 8px)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <div className="font-semibold truncate">
+                        {l.formulas?.nome ?? "—"}
+                      </div>
+                      <div
+                        className="text-xs mt-0.5"
+                        style={{ color: isActive ? "#BBDEFB" : "#607D8B" }}
+                      >
+                        <span>{l.numero_lote}</span>
+                        <span className="mx-1">·</span>
+                        <span>{l.data_producao}</span>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </aside>
+
+          {/* Main panel */}
+          <main className={`flex-1 overflow-y-auto bg-white md:block ${!mobileSidebarOpen ? "block" : "hidden"}`} style={{ padding: 24 }}>
+            <button
+              onClick={() => setMobileSidebarOpen(true)}
+              className="mb-4 flex items-center gap-1 text-sm font-semibold md:hidden"
+              style={{ color: "#1565C0", cursor: "pointer" }}
+            >
+              ← Envase
+            </button>
+            {!selectedId && (
+              <div className="flex items-center justify-center h-full min-h-[300px]">
+                <p className="text-gray-400 text-base">
+                  Selecione um lote para registar o envase
+                </p>
+              </div>
+            )}
+
+            {selectedId && formLoading && (
+              <div className="flex items-center justify-center h-full min-h-[300px]">
+                <p className="text-gray-400">Carregando...</p>
+              </div>
+            )}
+
+            {selectedId && !formLoading && selectedLote && (
+              <div className="max-w-xl">
+                {/* Header */}
+                <div className="mb-1 flex items-center gap-3 flex-wrap">
+                  <h2
+                    className="text-2xl font-bold"
+                    style={{ color: "#1A3A6B" }}
                   >
-                    <span>{l.numero_lote}</span>
-                    <span className="mx-1">·</span>
-                    <span>{l.data_producao}</span>
-                  </div>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </aside>
-
-      {/* Main panel */}
-      <main className={`flex-1 overflow-y-auto bg-white md:block ${!mobileSidebarOpen ? "block" : "hidden"}`} style={{ padding: 24 }}>
-        <button
-          onClick={() => setMobileSidebarOpen(true)}
-          className="mb-4 flex items-center gap-1 text-sm font-semibold md:hidden"
-          style={{ color: "#1565C0", cursor: "pointer" }}
-        >
-          ← Envase
-        </button>
-        {!selectedId && (
-          <div className="flex items-center justify-center h-full min-h-[300px]">
-            <p className="text-gray-400 text-base">
-              Selecione um lote para registar o envase
-            </p>
-          </div>
-        )}
-
-        {selectedId && formLoading && (
-          <div className="flex items-center justify-center h-full min-h-[300px]">
-            <p className="text-gray-400">Carregando...</p>
-          </div>
-        )}
-
-        {selectedId && !formLoading && selectedLote && (
-          <div className="max-w-xl">
-            {/* Header */}
-            <div className="mb-1 flex items-center gap-3 flex-wrap">
-              <h2
-                className="text-2xl font-bold"
-                style={{ color: "#1A3A6B" }}
-              >
-                {selectedLote.formulas?.nome ?? "—"}
-              </h2>
-              <span
-                className="px-2 py-0.5 rounded text-xs font-bold tracking-wider"
-                style={{ backgroundColor: "#E3F2FD", color: "#1565C0" }}
-              >
-                {selectedLote.numero_lote}
-              </span>
-            </div>
-            <p className="text-sm text-gray-500 mb-1">
-              Data de produção: <strong>{selectedLote.data_producao}</strong>
-            </p>
-            <p className="text-sm mb-6" style={{ color: "#1A3A6B" }}>
-              Rendimento Total:{" "}
-              <strong>
-                {selectedLote.formulas?.rendimento ?? "—"}{" "}
-                {selectedLote.formulas?.rendimento_unidade ?? "unidade"}
-              </strong>
-            </p>
-
-            {/* Quantity grid */}
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-4">
-              {[
-                { label: "1L", value: qtd1l, set: setQtd1l },
-                { label: "2L", value: qtd2l, set: setQtd2l },
-                { label: "5L", value: qtd5l, set: setQtd5l },
-                { label: "20L", value: qtd20l, set: setQtd20l },
-              ].map(({ label, value, set }) => (
-                <div
-                  key={label}
-                  className="flex flex-col gap-2 bg-white shadow-sm p-4"
-                  style={{ border: "1px solid #e5e7eb", borderRadius: 12 }}
-                >
-                  <span style={{ fontWeight: 700, fontSize: 18, color: "#1565C0" }}>{label}</span>
-                  <input
-                    className={inputCls}
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={value}
-                    onChange={(e) => set(Math.max(0, Number(e.target.value)))}
-                  />
+                    {selectedLote.formulas?.nome ?? "—"}
+                  </h2>
+                  <span
+                    className="px-2 py-0.5 rounded text-xs font-bold tracking-wider"
+                    style={{ backgroundColor: "#E3F2FD", color: "#1565C0" }}
+                  >
+                    {selectedLote.numero_lote}
+                  </span>
                 </div>
-              ))}
-            </div>
+                <p className="text-sm text-gray-500 mb-1">
+                  Data de produção: <strong>{selectedLote.data_producao}</strong>
+                </p>
+                <p className="text-sm mb-2" style={{ color: "#1A3A6B" }}>
+                  Rendimento Total:{" "}
+                  <strong>
+                    {selectedLote.formulas?.rendimento ?? "—"}{" "}
+                    {selectedLote.formulas?.rendimento_unidade ?? "unidade"}
+                  </strong>
+                </p>
 
-            {/* Summary */}
-            <p className="mb-4" style={{ color: "#1565C0", fontWeight: 700, fontSize: 18 }}>
-              Total de unidades: {totalUnidades}
+                {/* Insumos do Lote collapsible */}
+                <div className="mb-6">
+                  <button
+                    onClick={handleToggleInsumos}
+                    className="text-sm font-semibold"
+                    style={{ color: "#1565C0", cursor: "pointer", background: "none", border: "none", padding: 0 }}
+                  >
+                    {insumosOpen ? "▲ Ocultar insumos" : "▼ Ver insumos do lote"}
+                  </button>
+                  {insumosOpen && (
+                    <div className="mt-2 rounded-lg overflow-hidden" style={{ border: "1px solid #BBDEFB" }}>
+                      {insumosLoading ? (
+                        <p className="text-xs text-gray-400 px-3 py-2">Carregando...</p>
+                      ) : (insumosCache[selectedId] ?? []).length === 0 ? (
+                        <p className="text-xs text-gray-400 px-3 py-2">Nenhum insumo registado.</p>
+                      ) : (
+                        <table className="w-full text-xs border-collapse">
+                          <thead>
+                            <tr style={{ backgroundColor: "#BBDEFB" }}>
+                              {["Insumo", "Quantidade", "Unidade"].map((h) => (
+                                <th key={h} className="text-left px-3 py-2 font-semibold" style={{ color: "#1565C0" }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(insumosCache[selectedId] ?? []).map((row, i) => (
+                              <tr key={i} style={{ backgroundColor: "#E8F4FF" }}>
+                                <td className="px-3 py-1.5 text-gray-800">{row.nome}</td>
+                                <td className="px-3 py-1.5 text-gray-700">{row.quantidade}</td>
+                                <td className="px-3 py-1.5 text-gray-600">{row.unidade}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Quantity grid */}
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-4">
+                  {[
+                    { label: "1L", value: qtd1l, set: setQtd1l },
+                    { label: "2L", value: qtd2l, set: setQtd2l },
+                    { label: "5L", value: qtd5l, set: setQtd5l },
+                    { label: "20L", value: qtd20l, set: setQtd20l },
+                  ].map(({ label, value, set }) => (
+                    <div
+                      key={label}
+                      className="flex flex-col gap-2 bg-white shadow-sm p-4"
+                      style={{ border: "1px solid #e5e7eb", borderRadius: 12 }}
+                    >
+                      <span style={{ fontWeight: 700, fontSize: 18, color: "#1565C0" }}>{label}</span>
+                      <input
+                        className={inputCls}
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={value}
+                        onChange={(e) => set(Math.max(0, Number(e.target.value)))}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {/* Summary */}
+                <p className="mb-2" style={{ color: "#1565C0", fontWeight: 700, fontSize: 18 }}>
+                  Total de unidades: {totalUnidades}
+                </p>
+
+                {/* Rendimento Real */}
+                {(() => {
+                  const formulaRendimento = selectedLote.formulas?.rendimento ?? 0;
+                  const diff = rendimentoReal - formulaRendimento;
+                  return (
+                    <div className="mb-4">
+                      <p style={{ color: "#1565C0", fontWeight: 700, fontSize: 15 }}>
+                        Rendimento Real: {rendimentoReal} L
+                      </p>
+                      {formulaRendimento > 0 && diff > 0 && (
+                        <p className="mt-1 text-sm" style={{ color: "#E65100" }}>
+                          ⚠ Atenção: rendimento real ({rendimentoReal} L) excede o rendimento da fórmula ({formulaRendimento} L)
+                        </p>
+                      )}
+                      {formulaRendimento > 0 && diff < 0 && (
+                        <p className="mt-1 text-sm" style={{ color: "#757575" }}>
+                          Diferença: {diff} L em relação ao rendimento da fórmula
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Date */}
+                <div className="mb-6 max-w-xs">
+                  <Field label="Data do Envase">
+                    <input
+                      className={`${inputCls} cursor-pointer`}
+                      type="datetime-local"
+                      value={dataEnvase}
+                      onChange={(e) => setDataEnvase(e.target.value)}
+                    />
+                  </Field>
+                </div>
+
+                {/* Feedback */}
+                {successMsg && (
+                  <p className="text-sm text-green-700 bg-green-50 rounded px-3 py-2 mb-4">
+                    {successMsg}
+                  </p>
+                )}
+                {errorMsg && (
+                  <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mb-4">
+                    {errorMsg}
+                  </p>
+                )}
+
+                {/* Actions */}
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    onClick={handleSave}
+                    disabled={saveLoading || concluirLoading}
+                    className="flex-1 px-5 py-2 rounded-lg text-white text-sm font-bold hover:brightness-110 transition disabled:opacity-60"
+                    style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
+                  >
+                    {saveLoading ? "Salvando..." : "SALVAR"}
+                  </button>
+                  <button
+                    onClick={handleConcluir}
+                    disabled={!atLeastOneQtd || concluirLoading || saveLoading}
+                    className="flex-1 px-5 py-2 rounded-lg text-white text-sm font-bold hover:brightness-110 transition disabled:opacity-60"
+                    style={{ backgroundColor: "#2E7D32", cursor: "pointer" }}
+                  >
+                    {concluirLoading ? "Concluindo..." : "CONCLUIR LOTE"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      )}
+
+      {/* ── Histórico tab ── */}
+      {activeTab === "historico" && (
+        <div style={{ padding: 24 }}>
+          {historicoLoading && (
+            <p className="text-gray-400 text-sm">Carregando histórico...</p>
+          )}
+          {historicoError && (
+            <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2">
+              {historicoError}
             </p>
-
-            {/* Date */}
-            <div className="mb-6 max-w-xs">
-              <Field label="Data do Envase">
-                <input
-                  className={`${inputCls} cursor-pointer`}
-                  type="datetime-local"
-                  value={dataEnvase}
-                  onChange={(e) => setDataEnvase(e.target.value)}
-                />
-              </Field>
-            </div>
-
-            {/* Feedback */}
-            {successMsg && (
-              <p className="text-sm text-green-700 bg-green-50 rounded px-3 py-2 mb-4">
-                {successMsg}
-              </p>
-            )}
-            {errorMsg && (
-              <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mb-4">
-                {errorMsg}
-              </p>
-            )}
-
-            {/* Actions */}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <button
-                onClick={handleSave}
-                disabled={saveLoading || concluirLoading}
-                className="flex-1 px-5 py-2 rounded-lg text-white text-sm font-bold hover:brightness-110 transition disabled:opacity-60"
-                style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
-              >
-                {saveLoading ? "Salvando..." : "SALVAR"}
-              </button>
-              <button
-                onClick={handleConcluir}
-                disabled={!atLeastOneQtd || concluirLoading || saveLoading}
-                className="flex-1 px-5 py-2 rounded-lg text-white text-sm font-bold hover:brightness-110 transition disabled:opacity-60"
-                style={{ backgroundColor: "#2E7D32", cursor: "pointer" }}
-              >
-                {concluirLoading ? "Concluindo..." : "CONCLUIR LOTE"}
-              </button>
-            </div>
-          </div>
-        )}
-      </main>
+          )}
+          {!historicoLoading && !historicoError && historico !== null && (
+            historico.length === 0 ? (
+              <p className="text-gray-400 text-sm">Nenhum lote concluído ainda.</p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg shadow">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr style={{ backgroundColor: "#1565C0" }}>
+                      {["Produto", "Lote", "Data Envase", "1L", "2L", "5L", "20L", "Rendimento Real"].map((h) => (
+                        <th
+                          key={h}
+                          className="text-left text-white font-bold px-4 py-3"
+                          style={{ fontSize: 13 }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historico.map((item, idx) => {
+                      const env = item.envases[0];
+                      return (
+                        <tr key={item.id} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
+                          <td className="px-4 py-3 font-medium text-gray-800">{item.formulas?.nome ?? "—"}</td>
+                          <td className="px-4 py-3 text-gray-700">{item.numero_lote}</td>
+                          <td className="px-4 py-3 text-gray-700">{formatDataEnvase(env?.data_envase)}</td>
+                          <td className="px-4 py-3 text-gray-700">{env?.qtd_1l ?? 0}</td>
+                          <td className="px-4 py-3 text-gray-700">{env?.qtd_2l ?? 0}</td>
+                          <td className="px-4 py-3 text-gray-700">{env?.qtd_5l ?? 0}</td>
+                          <td className="px-4 py-3 text-gray-700">{env?.qtd_20l ?? 0}</td>
+                          <td className="px-4 py-3 font-semibold" style={{ color: "#1565C0" }}>
+                            {env?.rendimento_real != null ? `${env.rendimento_real} L` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+        </div>
+      )}
     </div>
   );
 }

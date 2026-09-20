@@ -323,9 +323,10 @@ export default function DashboardClient({
                     disabled={isLoading}
                     className="flex-shrink-0 flex items-center justify-center transition disabled:opacity-50"
                     style={{
-                      width: 18,
-                      height: 18,
-                      minWidth: 18,
+                      width: '20px',
+                      height: '20px',
+                      minWidth: '20px',
+                      minHeight: '20px',
                       borderRadius: 4,
                       border: "2px solid rgba(255,255,255,0.6)",
                       backgroundColor: item.concluido ? "rgba(255,255,255,0.3)" : "transparent",
@@ -372,6 +373,68 @@ export default function DashboardClient({
                 </li>
               );
             })}
+
+            {produtosAbaixo.length > 0 && (
+              <>
+                <li className="pt-3 pb-1">
+                  <span
+                    style={{
+                      color: "rgba(255,255,255,0.6)",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Necessidade de Produção
+                  </span>
+                </li>
+                {produtosAbaixo.map((p) => (
+                  <li
+                    key={`low-${p.id}`}
+                    className="flex items-center gap-2 py-1.5 border-b border-white/10 last:border-0"
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        width: '20px',
+                        height: '20px',
+                        minWidth: '20px',
+                        minHeight: '20px',
+                        backgroundColor: '#FFEE58',
+                        borderRadius: 4,
+                        flexShrink: 0,
+                        display: 'inline-block',
+                      }}
+                    />
+                    <button
+                      onClick={() => router.push("/producao")}
+                      className="flex-1 text-left hover:underline transition"
+                      style={{
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span
+                        className="block"
+                        style={{ fontSize: 14, color: "#FFFFFF" }}
+                      >
+                        {p.nome}
+                      </span>
+                      <span
+                        className="block"
+                        style={{ fontSize: 11, color: "rgba(255,255,255,0.8)" }}
+                      >
+                        Estoque baixo: {p.estoque_atual} / mín.{" "}
+                        {p.estoque_seguranca}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </>
+            )}
           </ul>
         </Card>
 

@@ -1,16 +1,29 @@
 "use client";
 
 import { useState } from "react";
+import { History } from "lucide-react";
 import {
   getProdutosAcabados,
   createProdutoAcabado,
   registrarRetirada,
   getRetiradasHoje,
   getLotesConcluidos,
+  getHistoricoProduto,
   type ProdutoAcabadoWithFlag,
   type RetiradasHoje,
   type LoteConcluidoWithFormula,
+  type HistoricoProdutoItem,
 } from "@/app/actions/produto-acabado";
+
+function formatDataEnvase(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return (
+    d.toLocaleDateString("pt-BR") +
+    " " +
+    d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+  );
+}
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
 
@@ -79,7 +92,7 @@ function ErrorMsg({ msg }: { msg: string | null }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-type ModalType = null | "novoProduto" | "retirada" | "relatorio";
+type ModalType = null | "novoProduto" | "retirada" | "relatorio" | "historico";
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -124,6 +137,12 @@ export default function ProdutoAcabadoClient({
   // PDF / share loading
   const [pdfLoading, setPdfLoading] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
+
+  // Historico state
+  const [historicoProdutoNome, setHistoricoProdutoNome] = useState<string>("");
+  const [historicoProduto, setHistoricoProduto] = useState<HistoricoProdutoItem[] | null>(null);
+  const [historicoLoading, setHistoricoLoading] = useState(false);
+  const [historicoError, setHistoricoError] = useState<string | null>(null);
 
   // ── Refresh helpers ──
 
@@ -176,6 +195,22 @@ export default function ProdutoAcabadoClient({
   function openRelatorio() {
     setModalError(null);
     setModal("relatorio");
+  }
+
+  async function openHistorico(nome: string) {
+    setHistoricoProdutoNome(nome);
+    setHistoricoProduto(null);
+    setHistoricoError(null);
+    setModal("historico");
+    setHistoricoLoading(true);
+    try {
+      const data = await getHistoricoProduto(nome);
+      setHistoricoProduto(data);
+    } catch (e) {
+      setHistoricoError(e instanceof Error ? e.message : "Erro ao carregar histórico.");
+    } finally {
+      setHistoricoLoading(false);
+    }
   }
 
   function closeModal() {
@@ -406,9 +441,15 @@ export default function ProdutoAcabadoClient({
                         className="flex-shrink-0"
                         style={{ color: "#1565C0", fontSize: 16, lineHeight: 1 }}
                       >●</span>
-                      <span className="font-medium text-gray-800" style={{ fontSize: 14 }}>
+                      <button
+                        onClick={() => openHistorico(p.nome)}
+                        title="Ver histórico de lotes"
+                        className="font-medium text-left hover:underline transition inline-flex items-center"
+                        style={{ fontSize: 14, color: "#1565C0", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                      >
                         {p.nome}
-                      </span>
+                        <History size={14} style={{ color: "#1565C0", marginLeft: 6, flexShrink: 0 }} />
+                      </button>
                     </div>
                   </td>
                   <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14 }}>
@@ -644,6 +685,77 @@ export default function ProdutoAcabadoClient({
                 style={{ backgroundColor: "#1565C0" }}
               >
                 {retiradaLoading ? "Confirmando..." : "CONFIRMAR"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Modal: Histórico de Lotes ── */}
+      {modal === "historico" && (
+        <Modal
+          title={`Histórico de Lotes: ${historicoProdutoNome}`}
+          onClose={closeModal}
+        >
+          <div className="flex flex-col gap-4">
+            {historicoLoading && (
+              <p className="text-sm text-gray-400 py-2">Carregando...</p>
+            )}
+            {historicoError && (
+              <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2">
+                {historicoError}
+              </p>
+            )}
+            {!historicoLoading && !historicoError && historicoProduto !== null && (
+              historicoProduto.length === 0 ? (
+                <p className="text-sm text-gray-500 py-2">
+                  Nenhum lote registado para este produto.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded-lg" style={{ border: "1px solid #e5e7eb" }}>
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr style={{ backgroundColor: "#1565C0" }}>
+                        {["Lote", "Data Envase", "1L", "2L", "5L", "20L", "Rend. Real"].map((h) => (
+                          <th
+                            key={h}
+                            className="text-left text-white font-bold px-3 py-2"
+                            style={{ fontSize: 12 }}
+                          >
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historicoProduto.map((item, idx) => {
+                        const env = item.envases[0];
+                        return (
+                          <tr key={item.id} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
+                            <td className="px-3 py-2 text-gray-700 font-medium">{item.numero_lote}</td>
+                            <td className="px-3 py-2 text-gray-700" style={{ whiteSpace: "nowrap" }}>{formatDataEnvase(env?.data_envase)}</td>
+                            <td className="px-3 py-2 text-gray-700">{env?.qtd_1l ?? 0}</td>
+                            <td className="px-3 py-2 text-gray-700">{env?.qtd_2l ?? 0}</td>
+                            <td className="px-3 py-2 text-gray-700">{env?.qtd_5l ?? 0}</td>
+                            <td className="px-3 py-2 text-gray-700">{env?.qtd_20l ?? 0}</td>
+                            <td className="px-3 py-2 font-semibold" style={{ color: "#1565C0" }}>
+                              {env?.rendimento_real != null ? `${env.rendimento_real} L` : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            )}
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={closeModal}
+                className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition"
+                style={{ backgroundColor: "#1565C0" }}
+              >
+                FECHAR
               </button>
             </div>
           </div>
