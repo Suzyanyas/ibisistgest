@@ -108,7 +108,7 @@ export async function getLoteInsumos(lote_id: string): Promise<LoteInsumoItem[]>
     .select("quantidade, unidade, insumos(nome)")
     .eq("lote_id", lote_id);
   if (error) throw new Error(error.message);
-  return ((data ?? []) as Array<{ quantidade: number; unidade: string | null; insumos: { nome: string } | null }>).map((row) => ({
+  return ((data ?? []) as unknown as Array<{ quantidade: number; unidade: string | null; insumos: { nome: string } | null }>).map((row) => ({
     nome: row.insumos?.nome ?? "—",
     quantidade: row.quantidade,
     unidade: row.unidade ?? "",
