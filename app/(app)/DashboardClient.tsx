@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   getAgendaProducao,
   getAgendaAtrasada,
@@ -124,6 +125,8 @@ export default function DashboardClient({
   initialProdutosAbaixo: ProdutoAbaixo[];
   formulas: FormulaRow[];
 }) {
+  const router = useRouter();
+
   const [agendaHoje, setAgendaHoje] =
     useState<AgendaItemWithFormula[]>(initialAgendaHoje);
   const [agendaAtrasada, setAgendaAtrasada] =
@@ -305,6 +308,11 @@ export default function DashboardClient({
               const isAtrasado =
                 !item.concluido && item.data_agenda < today;
               const isLoading = toggling.has(item.id);
+              const textColor = item.concluido
+                ? "rgba(255,255,255,0.4)"
+                : isAtrasado
+                ? "#FFCDD2"
+                : "#ffffff";
               return (
                 <li
                   key={item.id}
@@ -313,17 +321,34 @@ export default function DashboardClient({
                   <button
                     onClick={() => handleToggle(item)}
                     disabled={isLoading}
-                    className="flex-1 text-left py-1 transition disabled:opacity-50"
+                    className="flex-shrink-0 flex items-center justify-center transition disabled:opacity-50"
+                    style={{
+                      width: 18,
+                      height: 18,
+                      minWidth: 18,
+                      borderRadius: 4,
+                      border: "2px solid rgba(255,255,255,0.6)",
+                      backgroundColor: item.concluido ? "rgba(255,255,255,0.3)" : "transparent",
+                      cursor: "pointer",
+                    }}
+                    title="Marcar como concluído"
+                  >
+                    {item.concluido && (
+                      <span style={{ color: "white", fontSize: 10, lineHeight: 1 }}>✓</span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() =>
+                      router.push(
+                        `/producao?formula_id=${item.formula_id}&formula_nome=${encodeURIComponent(item.formulas?.nome ?? "")}`
+                      )
+                    }
+                    disabled={isLoading}
+                    className="flex-1 text-left py-1 transition disabled:opacity-50 hover:underline"
                     style={{
                       fontSize: 15,
-                      color: item.concluido
-                        ? "rgba(255,255,255,0.4)"
-                        : isAtrasado
-                        ? "#FFCDD2"
-                        : "#ffffff",
-                      textDecoration: item.concluido
-                        ? "line-through"
-                        : "none",
+                      color: textColor,
+                      textDecoration: item.concluido ? "line-through" : "none",
                     }}
                   >
                     {item.formulas?.nome ?? "—"}
@@ -376,7 +401,11 @@ export default function DashboardClient({
                   className="w-4 h-4 rounded border-2 border-white/60 flex-shrink-0"
                   aria-hidden="true"
                 />
-                <span>
+                <button
+                  onClick={() => router.push(`/envase?lote_id=${l.id}`)}
+                  className="text-left hover:underline transition"
+                  style={{ color: "inherit", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                >
                   {l.formulas?.nome ?? "—"}
                   <span
                     className="ml-1.5 text-xs"
@@ -384,7 +413,7 @@ export default function DashboardClient({
                   >
                     {l.numero_lote}
                   </span>
-                </span>
+                </button>
               </li>
             ))}
           </ul>

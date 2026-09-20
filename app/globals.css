@@ -147,7 +147,11 @@
     font-family: var(--font-nunito), system-ui, sans-serif !important;
     min-height: 40px;
     font-weight: 600;
+    cursor: pointer;
   }
+  a { cursor: pointer; }
+  [role="button"] { cursor: pointer; }
+  select { cursor: pointer; }
   input, select, textarea {
     font-family: var(--font-nunito), system-ui, sans-serif;
     min-height: 42px;

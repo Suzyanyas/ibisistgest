@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   getEnvaseByLote,
   saveEnvase,
@@ -9,8 +10,8 @@ import {
   type EnvaseRow,
 } from "@/app/actions/envase";
 
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+function nowStr() {
+  return new Date().toISOString().slice(0, 16);
 }
 
 const inputCls =
@@ -38,15 +39,25 @@ export default function EnvaseClient({
 }: {
   initialLotes: LoteEnvaseWithFormula[];
 }) {
+  const searchParams = useSearchParams();
   const [lotes, setLotes] = useState<LoteEnvaseWithFormula[]>(initialLotes);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(true);
+
+  useEffect(() => {
+    const loteId = searchParams.get("lote_id");
+    if (loteId && initialLotes.some((l) => l.id === loteId)) {
+      setSelectedId(loteId);
+      setMobileSidebarOpen(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [qtd1l, setQtd1l] = useState(0);
   const [qtd2l, setQtd2l] = useState(0);
   const [qtd5l, setQtd5l] = useState(0);
   const [qtd20l, setQtd20l] = useState(0);
-  const [dataEnvase, setDataEnvase] = useState(todayStr());
+  const [dataEnvase, setDataEnvase] = useState(nowStr());
 
   const [formLoading, setFormLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -61,7 +72,7 @@ export default function EnvaseClient({
     setQtd2l(0);
     setQtd5l(0);
     setQtd20l(0);
-    setDataEnvase(todayStr());
+    setDataEnvase(nowStr());
     setSuccessMsg(null);
     setErrorMsg(null);
   }, []);
@@ -77,7 +88,7 @@ export default function EnvaseClient({
           setQtd2l(existing.qtd_2l ?? 0);
           setQtd5l(existing.qtd_5l ?? 0);
           setQtd20l(existing.qtd_20l ?? 0);
-          setDataEnvase(existing.data_envase ?? todayStr());
+          setDataEnvase(existing.data_envase ? existing.data_envase.slice(0, 16) : nowStr());
         }
       } catch (e) {
         setErrorMsg(e instanceof Error ? e.message : "Erro ao carregar envase.");
@@ -163,6 +174,7 @@ export default function EnvaseClient({
                     fontWeight: isActive ? 600 : 400,
                     margin: "0 4px",
                     width: "calc(100% - 8px)",
+                    cursor: "pointer",
                   }}
                 >
                   <div className="font-semibold truncate">
@@ -188,7 +200,7 @@ export default function EnvaseClient({
         <button
           onClick={() => setMobileSidebarOpen(true)}
           className="mb-4 flex items-center gap-1 text-sm font-semibold md:hidden"
-          style={{ color: "#1565C0" }}
+          style={{ color: "#1565C0", cursor: "pointer" }}
         >
           ← Envase
         </button>
@@ -269,8 +281,8 @@ export default function EnvaseClient({
             <div className="mb-6 max-w-xs">
               <Field label="Data do Envase">
                 <input
-                  className={inputCls}
-                  type="date"
+                  className={`${inputCls} cursor-pointer`}
+                  type="datetime-local"
                   value={dataEnvase}
                   onChange={(e) => setDataEnvase(e.target.value)}
                 />
@@ -295,7 +307,7 @@ export default function EnvaseClient({
                 onClick={handleSave}
                 disabled={saveLoading || concluirLoading}
                 className="flex-1 px-5 py-2 rounded-lg text-white text-sm font-bold hover:brightness-110 transition disabled:opacity-60"
-                style={{ backgroundColor: "#1565C0" }}
+                style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
               >
                 {saveLoading ? "Salvando..." : "SALVAR"}
               </button>
@@ -303,7 +315,7 @@ export default function EnvaseClient({
                 onClick={handleConcluir}
                 disabled={!atLeastOneQtd || concluirLoading || saveLoading}
                 className="flex-1 px-5 py-2 rounded-lg text-white text-sm font-bold hover:brightness-110 transition disabled:opacity-60"
-                style={{ backgroundColor: "#2E7D32" }}
+                style={{ backgroundColor: "#2E7D32", cursor: "pointer" }}
               >
                 {concluirLoading ? "Concluindo..." : "CONCLUIR LOTE"}
               </button>

@@ -43,7 +43,7 @@ export default function Navbar() {
           className="md:hidden flex flex-col gap-1 p-2 rounded focus:outline-none"
           onClick={() => setMenuOpen((prev) => !prev)}
           aria-label="Menu"
-          style={{ minHeight: 40 }}
+          style={{ minHeight: 40, cursor: "pointer" }}
         >
           <span className="block w-6 h-0.5 bg-white"></span>
           <span className="block w-6 h-0.5 bg-white"></span>
@@ -83,6 +83,7 @@ export default function Navbar() {
                 letterSpacing: "0.05em",
                 background: "transparent",
                 border: "1px solid rgba(255,255,255,0.5)",
+                cursor: "pointer",
               }}
               onMouseOver={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.1)")}
               onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
@@ -121,7 +122,7 @@ export default function Navbar() {
                 <button
                   type="submit"
                   className="block w-full text-left px-6 py-3 font-semibold text-blue-100 hover:text-white hover:bg-blue-700 transition-colors"
-                  style={{ fontSize: 14 }}
+                  style={{ fontSize: 14, cursor: "pointer" }}
                 >
                   Sair
                 </button>

@@ -456,30 +456,32 @@ export default function FormulasClient({
           style={{ backgroundColor: "#1565C0" }}
         >
           <span className="text-white" style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 16, fontWeight: 600 }}>Fórmulas</span>
-          <button
-            onClick={openNova}
-            style={{
-              width: "32px",
-              height: "32px",
-              minWidth: "32px",
-              minHeight: "32px",
-              borderRadius: "50%",
-              border: "none",
-              background: "white",
-              color: "#1565C0",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "20px",
-              fontWeight: "700",
-              cursor: "pointer",
-              flexShrink: 0,
-              boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
-            }}
-            title="Nova Fórmula"
-          >
-            +
-          </button>
+          {isAdmin && (
+            <button
+              onClick={openNova}
+              style={{
+                width: "32px",
+                height: "32px",
+                minWidth: "32px",
+                minHeight: "32px",
+                borderRadius: "50%",
+                border: "none",
+                background: "white",
+                color: "#1565C0",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "20px",
+                fontWeight: "700",
+                cursor: "pointer",
+                flexShrink: 0,
+                boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+              }}
+              title="Nova Fórmula"
+            >
+              +
+            </button>
+          )}
         </div>
         <ul className="flex-1 overflow-y-auto py-2">
           {formulas.length === 0 && (
@@ -502,6 +504,7 @@ export default function FormulasClient({
                     fontWeight: isActive ? 600 : 400,
                     margin: "0 4px",
                     width: "calc(100% - 8px)",
+                    cursor: "pointer",
                   }}
                 >
                   {f.nome}
@@ -520,7 +523,7 @@ export default function FormulasClient({
         <button
           onClick={() => setMobileSidebarOpen(true)}
           className="mb-4 flex items-center gap-1 text-sm font-semibold md:hidden"
-          style={{ color: "#1565C0" }}
+          style={{ color: "#1565C0", cursor: "pointer" }}
         >
           ← Fórmulas
         </button>
@@ -571,20 +574,24 @@ export default function FormulasClient({
                 )}
               </div>
               <div className="flex gap-2 flex-shrink-0">
-                <button
-                  onClick={openEditar}
-                  className="px-3 py-1.5 rounded border border-blue-300 text-sm font-semibold hover:bg-blue-50 transition"
-                  style={{ color: "#1565C0" }}
-                >
-                  Editar Fórmula
-                </button>
-                <button
-                  onClick={openExcluir}
-                  className="px-3 py-1.5 rounded border border-red-300 text-sm font-semibold hover:bg-red-50 transition"
-                  style={{ color: "#C62828" }}
-                >
-                  Excluir Fórmula
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={openEditar}
+                    className="px-3 py-1.5 rounded border border-blue-300 text-sm font-semibold hover:bg-blue-50 transition"
+                    style={{ color: "#1565C0" }}
+                  >
+                    Editar Fórmula
+                  </button>
+                )}
+                {isAdmin && (
+                  <button
+                    onClick={openExcluir}
+                    className="px-3 py-1.5 rounded border border-red-300 text-sm font-semibold hover:bg-red-50 transition"
+                    style={{ color: "#C62828" }}
+                  >
+                    Excluir Fórmula
+                  </button>
+                )}
               </div>
             </div>
 
@@ -691,36 +698,40 @@ export default function FormulasClient({
                         )}
                         <td className="px-4 py-4">
                           <div className="flex gap-2 items-center">
-                            <button
-                              onClick={() => openEditInsumo(fi)}
-                              className="px-2 py-1 rounded text-white text-xs font-semibold hover:brightness-110 transition"
-                              style={{ backgroundColor: "#1565C0" }}
-                              title="Editar insumo"
-                            >
-                              Editar
-                            </button>
-                            <button
-                              onClick={() => openRemoveInsumo(fi)}
-                              title="Remover insumo"
-                              style={{
-                                width: '32px',
-                                height: '32px',
-                                minWidth: '32px',
-                                minHeight: '32px',
-                                borderRadius: '50%',
-                                backgroundColor: '#C62828',
-                                color: 'white',
-                                border: 'none',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                padding: '0',
-                                flexShrink: 0,
-                              }}
-                            >
-                              <Trash2 size={16} />
-                            </button>
+                            {isAdmin && (
+                              <button
+                                onClick={() => openEditInsumo(fi)}
+                                className="px-2 py-1 rounded text-white text-xs font-semibold hover:brightness-110 transition"
+                                style={{ backgroundColor: "#1565C0" }}
+                                title="Editar insumo"
+                              >
+                                Editar
+                              </button>
+                            )}
+                            {isAdmin && (
+                              <button
+                                onClick={() => openRemoveInsumo(fi)}
+                                title="Remover insumo"
+                                style={{
+                                  width: '32px',
+                                  height: '32px',
+                                  minWidth: '32px',
+                                  minHeight: '32px',
+                                  borderRadius: '50%',
+                                  backgroundColor: '#C62828',
+                                  color: 'white',
+                                  border: 'none',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  padding: '0',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -750,13 +761,15 @@ export default function FormulasClient({
               <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mb-3">{custoError}</p>
             )}
 
-            <button
-              onClick={openAddInsumo}
-              className="px-4 py-2 rounded text-white text-sm font-semibold shadow hover:brightness-110 transition"
-              style={{ backgroundColor: "#1565C0" }}
-            >
-              + Adicionar Insumo
-            </button>
+            {isAdmin && (
+              <button
+                onClick={openAddInsumo}
+                className="px-4 py-2 rounded text-white text-sm font-semibold shadow hover:brightness-110 transition"
+                style={{ backgroundColor: "#1565C0" }}
+              >
+                + Adicionar Insumo
+              </button>
+            )}
           </div>
         )}
       </main>

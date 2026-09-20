@@ -59,7 +59,7 @@ function Modal({
           <h2 className="text-white font-semibold text-lg">{title}</h2>
           <button
             onClick={onClose}
-            className="text-white opacity-70 hover:opacity-100 text-2xl leading-none"
+            className="text-white opacity-70 hover:opacity-100 text-2xl leading-none cursor-pointer"
             aria-label="Fechar"
           >
             &times;
@@ -280,7 +280,7 @@ export default function EstoqueInsumosClient({
         <button
           onClick={() => { setError(null); setModal("novo"); }}
           className="px-4 py-2 rounded-lg text-white text-sm font-bold shadow hover:brightness-110 transition"
-          style={{ backgroundColor: "#1565C0" }}
+          style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
         >
           + Novo Insumo
         </button>
@@ -324,7 +324,7 @@ export default function EstoqueInsumosClient({
                     <button
                       onClick={() => openHistorico(ins)}
                       className="font-medium hover:underline text-left"
-                      style={{ color: "#1565C0" }}
+                      style={{ color: "#1565C0", cursor: "pointer" }}
                     >
                       {ins.estoque_baixo && (
                         <span style={{ color: "#F59E0B" }}>
@@ -350,7 +350,7 @@ export default function EstoqueInsumosClient({
                     <button
                       onClick={() => openEntrada(ins)}
                       className="px-3 py-1 rounded-lg text-white text-xs font-semibold transition"
-                      style={{ backgroundColor: "#16A34A" }}
+                      style={{ backgroundColor: "#16A34A", cursor: "pointer" }}
                       onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#15803D")}
                       onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#16A34A")}
                     >
@@ -359,7 +359,7 @@ export default function EstoqueInsumosClient({
                     <button
                       onClick={() => openAtualizacao(ins)}
                       className="px-3 py-1 rounded-lg text-white text-xs font-semibold transition"
-                      style={{ backgroundColor: "#1565C0" }}
+                      style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
                       onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#1248A0")}
                       onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#1565C0")}
                     >
@@ -428,7 +428,7 @@ export default function EstoqueInsumosClient({
             <div className="flex gap-3 pt-2 justify-end">
               <button
                 onClick={closeModal}
-                className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
+                className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition cursor-pointer"
               >
                 CANCELAR
               </button>
@@ -436,7 +436,7 @@ export default function EstoqueInsumosClient({
                 onClick={handleSaveNovo}
                 disabled={isPending}
                 className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
-                style={{ backgroundColor: "#1565C0" }}
+                style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
               >
                 {isPending ? "Salvando..." : "SALVAR"}
               </button>
@@ -512,7 +512,7 @@ export default function EstoqueInsumosClient({
             <div className="flex gap-3 pt-2 justify-end">
               <button
                 onClick={closeModal}
-                className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
+                className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition cursor-pointer"
               >
                 CANCELAR
               </button>
@@ -520,7 +520,7 @@ export default function EstoqueInsumosClient({
                 onClick={handleSaveEntrada}
                 disabled={isPending}
                 className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
-                style={{ backgroundColor: "#2E7D32" }}
+                style={{ backgroundColor: "#2E7D32", cursor: "pointer" }}
               >
                 {isPending ? "Salvando..." : "SALVAR"}
               </button>
@@ -593,7 +593,7 @@ export default function EstoqueInsumosClient({
             <div className="flex gap-3 pt-2 justify-end">
               <button
                 onClick={closeModal}
-                className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
+                className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition cursor-pointer"
               >
                 CANCELAR
               </button>
@@ -601,7 +601,7 @@ export default function EstoqueInsumosClient({
                 onClick={handleSaveAtualizacao}
                 disabled={isPending}
                 className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
-                style={{ backgroundColor: "#1565C0" }}
+                style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
               >
                 {isPending ? "Salvando..." : "SALVAR"}
               </button>
@@ -629,7 +629,7 @@ export default function EstoqueInsumosClient({
               </h2>
               <button
                 onClick={closeModal}
-                className="text-white opacity-70 hover:opacity-100 text-2xl leading-none"
+                className="text-white opacity-70 hover:opacity-100 text-2xl leading-none cursor-pointer"
               >
                 &times;
               </button>
@@ -677,7 +677,7 @@ export default function EstoqueInsumosClient({
             <div className="px-6 py-4 flex justify-end border-t border-gray-100 flex-shrink-0">
               <button
                 onClick={closeModal}
-                className="px-5 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
+                className="px-5 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition cursor-pointer"
               >
                 FECHAR
               </button>

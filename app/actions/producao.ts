@@ -133,6 +133,54 @@ export async function updateLoteStatus(
     .update({ status })
     .eq("id", id);
   if (error) throw new Error(error.message);
+
+  if (status === "envase") {
+    const { data: lote, error: loteError } = await supabase
+      .from("lotes_producao")
+      .select("numero_lote")
+      .eq("id", id)
+      .single();
+    if (loteError) throw new Error(loteError.message);
+
+    const { data: loteInsumos, error: liError } = await supabase
+      .from("lote_insumos")
+      .select("insumo_id, quantidade")
+      .eq("lote_id", id);
+    if (liError) throw new Error(liError.message);
+
+    if (loteInsumos && loteInsumos.length > 0) {
+      const today = new Date().toISOString().slice(0, 10);
+      const obs = `Produção lote ${lote.numero_lote}`;
+
+      for (const li of loteInsumos) {
+        const { data: insumo, error: insumoError } = await supabase
+          .from("insumos")
+          .select("estoque_atual")
+          .eq("id", li.insumo_id)
+          .single();
+        if (insumoError) throw new Error(insumoError.message);
+
+        const novoEstoque = Math.max(0, (insumo.estoque_atual ?? 0) - li.quantidade);
+
+        const { error: updateError } = await supabase
+          .from("insumos")
+          .update({ estoque_atual: novoEstoque })
+          .eq("id", li.insumo_id);
+        if (updateError) throw new Error(updateError.message);
+
+        const { error: movError } = await supabase
+          .from("insumo_movimentos")
+          .insert({
+            insumo_id: li.insumo_id,
+            tipo: "saida",
+            quantidade: li.quantidade,
+            data: today,
+            obs,
+          });
+        if (movError) throw new Error(movError.message);
+      }
+    }
+  }
 }
 
 export async function getFormulasList(): Promise<FormulaBasic[]> {

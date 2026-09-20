@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useTransition } from "react";
 import { Trash2 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   getLotesProducao,
   getLoteWithInsumos,
@@ -184,6 +184,7 @@ export default function ProducaoClient({
   initialLotes: LoteWithFormula[];
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
 
   const [lotes, setLotes] = useState<LoteWithFormula[]>(initialLotes);
@@ -283,15 +284,21 @@ export default function ProducaoClient({
   // ── Load formulas on mount for the inline form ──
 
   useEffect(() => {
+    const formulaIdParam = searchParams.get("formula_id");
     setFormulasLoading(true);
     getFormulasList()
       .then((list) => {
         setFormulasList(list);
         if (list.length > 0) {
-          handleFormulaChange(list[0].id, list[0], list);
+          const target = formulaIdParam
+            ? (list.find((f) => f.id === formulaIdParam) ?? list[0])
+            : list[0];
+          handleFormulaChange(target.id, target, list);
         }
       })
-      .catch(() => {})
+      .catch((err) => {
+        console.error("[ProducaoClient] getFormulasList error:", err);
+      })
       .finally(() => setFormulasLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -472,14 +479,9 @@ export default function ProducaoClient({
     setActionLoading(true);
     try {
       await updateLoteStatus(selectedId, "envase");
-      setLotes((prev) =>
-        prev.map((l) => (l.id === selectedId ? { ...l, status: "envase" } : l))
-      );
-      refresh();
-      await reloadDetail();
+      router.push(`/envase?lote_id=${selectedId}`);
     } catch (e) {
       setDetailError(e instanceof Error ? e.message : "Erro ao atualizar status.");
-    } finally {
       setActionLoading(false);
     }
   }
@@ -504,10 +506,10 @@ export default function ProducaoClient({
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex" style={{ minHeight: "calc(100vh - 64px)" }}>
+    <div className="flex overflow-hidden" style={{ minHeight: "calc(100vh - 64px)" }}>
       {/* ── Sidebar ── */}
       <aside
-        className={`flex-shrink-0 flex-col border-r border-gray-200 bg-white md:flex ${mobileSidebarOpen ? "flex" : "hidden"}`}
+        className={`flex-shrink-0 flex-col border-r border-gray-200 bg-white md:flex relative z-10 ${mobileSidebarOpen ? "flex" : "hidden"}`}
         style={{ width: 220 }}
       >
         <div
@@ -562,6 +564,7 @@ export default function ProducaoClient({
                     margin: "0 4px",
                     width: "calc(100% - 8px)",
                     display: "block",
+                    cursor: "pointer",
                   }}
                 >
                   <div className="font-semibold truncate">
@@ -607,11 +610,11 @@ export default function ProducaoClient({
       </aside>
 
       {/* ── Main panel ── */}
-      <main className={`flex-1 overflow-y-auto bg-white md:block ${!mobileSidebarOpen ? "block" : "hidden"}`} style={{ padding: 24 }}>
+      <main className={`flex-1 min-w-0 overflow-y-auto bg-white md:block ${!mobileSidebarOpen ? "block" : "hidden"}`} style={{ padding: 24 }}>
         <button
           onClick={() => setMobileSidebarOpen(true)}
           className="mb-4 flex items-center gap-1 text-sm font-semibold md:hidden"
-          style={{ color: "#1565C0" }}
+          style={{ color: "#1565C0", cursor: "pointer" }}
         >
           ← Produção
         </button>
@@ -817,16 +820,6 @@ export default function ProducaoClient({
                     {actionLoading ? "Aguarde..." : "Mover para Envase"}
                   </button>
                 )}
-                {detail.status === "envase" && (
-                  <button
-                    onClick={handleConcluir}
-                    disabled={actionLoading || isPending}
-                    className="px-3 py-1.5 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
-                    style={{ backgroundColor: "#2E7D32" }}
-                  >
-                    {actionLoading ? "Aguarde..." : "Concluir"}
-                  </button>
-                )}
                 <button
                   onClick={openExcluirLote}
                   className="px-3 py-1.5 rounded border border-red-300 text-sm font-semibold hover:bg-red-50 transition"
@@ -836,6 +829,26 @@ export default function ProducaoClient({
                 </button>
               </div>
             </div>
+
+            {/* Status info banners */}
+            {detail.status === "envase" && (
+              <div
+                className="flex items-center gap-3 rounded-lg px-4 py-3 mb-5 text-sm"
+                style={{ backgroundColor: "#E3F2FD", color: "#1565C0", border: "1px solid #BBDEFB" }}
+              >
+                <span style={{ fontSize: 18 }}>ℹ️</span>
+                <span>Este lote está em envase. Aceda ao módulo Envase para concluir.</span>
+              </div>
+            )}
+            {detail.status === "concluido" && (
+              <div
+                className="flex items-center gap-3 rounded-lg px-4 py-3 mb-5 text-sm"
+                style={{ backgroundColor: "#E8F5E9", color: "#2E7D32", border: "1px solid #C8E6C9" }}
+              >
+                <span style={{ fontSize: 18 }}>✓</span>
+                <span>Lote concluído.</span>
+              </div>
+            )}
 
             {/* Insumos table */}
             <h3
@@ -849,7 +862,10 @@ export default function ProducaoClient({
               <table className="w-full text-sm border-collapse">
                 <thead>
                   <tr style={{ backgroundColor: "#1565C0" }}>
-                    {["Insumo", "Quantidade", "Unidade", "Ações"].map((h) => (
+                    {(detail.status === "producao"
+                      ? ["Insumo", "Quantidade", "Unidade", "Ações"]
+                      : ["Insumo", "Quantidade", "Unidade"]
+                    ).map((h) => (
                       <th
                         key={h}
                         className="text-left text-white font-bold px-4 py-4"
@@ -863,7 +879,7 @@ export default function ProducaoClient({
                   {detail.lote_insumos.length === 0 && (
                     <tr>
                       <td
-                        colSpan={4}
+                        colSpan={detail.status === "producao" ? 4 : 3}
                         className="text-center py-8 text-gray-400"
                       >
                         Nenhum insumo adicionado.
@@ -884,52 +900,56 @@ export default function ProducaoClient({
                         {li.quantidade}
                       </td>
                       <td className="px-4 py-4 text-gray-700">{li.unidade}</td>
-                      <td className="px-4 py-4">
-                        <div className="flex gap-2 items-center">
-                          <button
-                            onClick={() => openEditInsumo(li)}
-                            className="px-2 py-1 rounded text-white text-xs font-semibold hover:brightness-110 transition"
-                            style={{ backgroundColor: "#1565C0" }}
-                          >
-                            Editar
-                          </button>
-                          <button
-                            onClick={() => openExcluirInsumo(li)}
-                            title="Remover insumo"
-                            style={{
-                              width: '32px',
-                              height: '32px',
-                              minWidth: '32px',
-                              minHeight: '32px',
-                              borderRadius: '50%',
-                              backgroundColor: '#C62828',
-                              color: 'white',
-                              border: 'none',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              padding: '0',
-                              flexShrink: 0,
-                            }}
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </td>
+                      {detail.status === "producao" && (
+                        <td className="px-4 py-4">
+                          <div className="flex gap-2 items-center">
+                            <button
+                              onClick={() => openEditInsumo(li)}
+                              className="px-2 py-1 rounded text-white text-xs font-semibold hover:brightness-110 transition"
+                              style={{ backgroundColor: "#1565C0" }}
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => openExcluirInsumo(li)}
+                              title="Remover insumo"
+                              style={{
+                                width: '32px',
+                                height: '32px',
+                                minWidth: '32px',
+                                minHeight: '32px',
+                                borderRadius: '50%',
+                                backgroundColor: '#C62828',
+                                color: 'white',
+                                border: 'none',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '0',
+                                flexShrink: 0,
+                              }}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
 
-            <button
-              onClick={openAddInsumo}
-              className="px-4 py-2 rounded text-white text-sm font-semibold shadow hover:brightness-110 transition"
-              style={{ backgroundColor: "#1565C0" }}
-            >
-              + Adicionar Insumo
-            </button>
+            {detail.status === "producao" && (
+              <button
+                onClick={openAddInsumo}
+                className="px-4 py-2 rounded text-white text-sm font-semibold shadow hover:brightness-110 transition"
+                style={{ backgroundColor: "#1565C0" }}
+              >
+                + Adicionar Insumo
+              </button>
+            )}
           </div>
         )}
       </main>
