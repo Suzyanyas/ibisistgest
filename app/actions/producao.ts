@@ -53,12 +53,13 @@ export async function createLote(
   formula_id: string,
   numero_lote: string,
   data_producao: string,
-  insumoOverrides?: Array<{ insumo_id: string; quantidade: number; unidade: string }>
+  insumoOverrides?: Array<{ insumo_id: string; quantidade: number; unidade: string }>,
+  fragancia?: string
 ): Promise<LoteRow> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("lotes_producao")
-    .insert({ formula_id, numero_lote, data_producao, status: "producao" })
+    .insert({ formula_id, numero_lote, data_producao, status: "producao", fragancia: fragancia || null })
     .select()
     .single();
   if (error) throw new Error(error.message);
@@ -220,12 +221,13 @@ export async function getFormulaInsumos(
 export async function updateLote(
   id: string,
   numero_lote: string,
-  data_producao: string
+  data_producao: string,
+  fragancia?: string
 ): Promise<LoteRow> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("lotes_producao")
-    .update({ numero_lote, data_producao })
+    .update({ numero_lote, data_producao, fragancia: fragancia || null })
     .eq("id", id)
     .select()
     .single();

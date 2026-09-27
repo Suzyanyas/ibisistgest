@@ -1,8 +1,9 @@
 import { getInsumos } from "@/app/actions/insumos";
+import { getUserRole } from "@/app/actions/auth-role";
 import EstoqueInsumosClient from "./EstoqueInsumosClient";
 
-// TODO: restore auth before delivery
 export default async function EstoqueInsumosPage() {
   const insumos = await getInsumos();
-  return <EstoqueInsumosClient initialInsumos={insumos} isAdmin={true} />;
+  const role = await getUserRole();
+  return <EstoqueInsumosClient initialInsumos={insumos} isAdmin={role === "admin"} />;
 }

@@ -154,7 +154,7 @@ export async function concluirEnvase(lote_id: string): Promise<void> {
 
   const { data: existing, error: paError } = await supabase
     .from("produtos_acabados")
-    .select("id, estoque_atual")
+    .select("id, estoque_atual, estoque_1l, estoque_2l, estoque_5l, estoque_20l")
     .eq("nome", formula.nome)
     .maybeSingle();
   if (paError) throw new Error(paError.message);
@@ -162,7 +162,13 @@ export async function concluirEnvase(lote_id: string): Promise<void> {
   if (existing) {
     const { error: updateError } = await supabase
       .from("produtos_acabados")
-      .update({ estoque_atual: existing.estoque_atual + total })
+      .update({
+        estoque_atual: existing.estoque_atual + total,
+        estoque_1l: (existing.estoque_1l ?? 0) + (envase.qtd_1l ?? 0),
+        estoque_2l: (existing.estoque_2l ?? 0) + (envase.qtd_2l ?? 0),
+        estoque_5l: (existing.estoque_5l ?? 0) + (envase.qtd_5l ?? 0),
+        estoque_20l: (existing.estoque_20l ?? 0) + (envase.qtd_20l ?? 0),
+      })
       .eq("id", existing.id);
     if (updateError) throw new Error(updateError.message);
   } else {
@@ -173,6 +179,10 @@ export async function concluirEnvase(lote_id: string): Promise<void> {
         lote_id,
         estoque_atual: total,
         estoque_seguranca: 0,
+        estoque_1l: envase.qtd_1l ?? 0,
+        estoque_2l: envase.qtd_2l ?? 0,
+        estoque_5l: envase.qtd_5l ?? 0,
+        estoque_20l: envase.qtd_20l ?? 0,
       });
     if (insertError) throw new Error(insertError.message);
   }

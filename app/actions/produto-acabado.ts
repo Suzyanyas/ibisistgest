@@ -42,44 +42,60 @@ export async function getProdutosAcabados(): Promise<ProdutoAcabadoWithFlag[]> {
 export async function createProdutoAcabado(
   nome: string,
   lote_id: string | null,
-  estoque_inicial: number,
-  estoque_seguranca: number
+  estoque_seguranca: number,
+  estoque_1l: number,
+  estoque_2l: number,
+  estoque_5l: number,
+  estoque_20l: number
 ): Promise<void> {
   const supabase = await createClient();
+  const estoque_atual = estoque_1l + estoque_2l + estoque_5l + estoque_20l;
   const { error } = await supabase.from("produtos_acabados").insert({
     nome,
     lote_id: lote_id || null,
-    estoque_atual: estoque_inicial,
+    estoque_atual,
     estoque_seguranca,
+    estoque_1l,
+    estoque_2l,
+    estoque_5l,
+    estoque_20l,
   });
   if (error) throw new Error(error.message);
 }
 
 export async function registrarRetirada(
   produto_id: string,
-  quantidade: number
+  qtd_1l: number,
+  qtd_2l: number,
+  qtd_5l: number,
+  qtd_20l: number
 ): Promise<void> {
   const supabase = await createClient();
+  const total = qtd_1l + qtd_2l + qtd_5l + qtd_20l;
 
   const { data: produto, error: fetchErr } = await supabase
     .from("produtos_acabados")
-    .select("estoque_atual")
+    .select("estoque_atual, estoque_1l, estoque_2l, estoque_5l, estoque_20l")
     .eq("id", produto_id)
     .single();
   if (fetchErr) throw new Error(fetchErr.message);
 
-  const novoEstoque = (produto.estoque_atual ?? 0) - quantidade;
-
   const { error: updateErr } = await supabase
     .from("produtos_acabados")
-    .update({ estoque_atual: novoEstoque })
+    .update({
+      estoque_atual: (produto.estoque_atual ?? 0) - total,
+      estoque_1l: (produto.estoque_1l ?? 0) - qtd_1l,
+      estoque_2l: (produto.estoque_2l ?? 0) - qtd_2l,
+      estoque_5l: (produto.estoque_5l ?? 0) - qtd_5l,
+      estoque_20l: (produto.estoque_20l ?? 0) - qtd_20l,
+    })
     .eq("id", produto_id);
   if (updateErr) throw new Error(updateErr.message);
 
   const today = new Date().toISOString().slice(0, 10);
   const { error: insertErr } = await supabase
     .from("produto_retiradas")
-    .insert({ produto_id, quantidade, data_retirada: today });
+    .insert({ produto_id, quantidade: total, qtd_1l, qtd_2l, qtd_5l, qtd_20l, data_retirada: today });
   if (insertErr) throw new Error(insertErr.message);
 }
 

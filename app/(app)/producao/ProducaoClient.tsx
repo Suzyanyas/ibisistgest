@@ -208,6 +208,7 @@ export default function ProducaoClient({
   const [selFormulaId, setSelFormulaId] = useState("");
   const [novoNumeroLote, setNovoNumeroLote] = useState("");
   const [novoData, setNovoData] = useState(todayStr());
+  const [novoFragrancia, setNovoFragrancia] = useState("");
   const [formulaInsumosPreview, setFormulaInsumosPreview] = useState<FormulaInsumoPreview[]>([]);
   const [editableInsumos, setEditableInsumos] = useState<EditableInsumo[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -235,6 +236,7 @@ export default function ProducaoClient({
   const [editingLoteHeader, setEditingLoteHeader] = useState(false);
   const [editNumeroLote, setEditNumeroLote] = useState("");
   const [editDataProducao, setEditDataProducao] = useState("");
+  const [editFragrancia, setEditFragrancia] = useState("");
   const [loteEditSaving, setLoteEditSaving] = useState(false);
   const [loteEditError, setLoteEditError] = useState<string | null>(null);
 
@@ -250,6 +252,7 @@ export default function ProducaoClient({
     setSelFormulaId("");
     setNovoNumeroLote("");
     setNovoData(todayStr());
+    setNovoFragrancia("");
     setFormulaInsumosPreview([]);
     setEditableInsumos([]);
     setSelInsumoId("");
@@ -324,6 +327,7 @@ export default function ProducaoClient({
     setDetail(null);
     setInlineError(null);
     setNovoData(todayStr());
+    setNovoFragrancia("");
     setMobileSidebarOpen(false);
     if (selFormulaId) {
       const count = lotes.filter((l) => l.formula_id === selFormulaId).length;
@@ -421,7 +425,7 @@ export default function ProducaoClient({
     setInlineSaving(true);
     try {
       const overrides = isAdmin && editableInsumos.length > 0 ? editableInsumos : undefined;
-      const newLote = await createLote(selFormulaId, novoNumeroLote.trim(), novoData, overrides);
+      const newLote = await createLote(selFormulaId, novoNumeroLote.trim(), novoData, overrides, novoFragrancia.trim() || undefined);
       await refreshLotes();
       refresh();
       setSelectedId(newLote.id);
@@ -517,7 +521,7 @@ export default function ProducaoClient({
     setLoteEditError(null);
     setLoteEditSaving(true);
     try {
-      const updated = await updateLote(selectedId, editNumeroLote.trim(), editDataProducao);
+      const updated = await updateLote(selectedId, editNumeroLote.trim(), editDataProducao, editFragrancia.trim() || undefined);
       setLotes((prev) =>
         prev.map((l) =>
           l.id === selectedId
@@ -726,6 +730,14 @@ export default function ProducaoClient({
                       onChange={(e) => setNovoData(e.target.value)}
                     />
                   </Field>
+                  <Field label="Fragrância (opcional)">
+                    <input
+                      className={inputCls}
+                      value={novoFragrancia}
+                      onChange={(e) => setNovoFragrancia(e.target.value)}
+                      placeholder="Ex: Lavanda"
+                    />
+                  </Field>
 
                   {previewLoading && (
                     <p className="text-xs text-gray-400">
@@ -882,6 +894,7 @@ export default function ProducaoClient({
                           onClick={() => {
                             setEditNumeroLote(detail.numero_lote);
                             setEditDataProducao(detail.data_producao);
+                            setEditFragrancia(detail.fragancia ?? "");
                             setLoteEditError(null);
                             setEditingLoteHeader(true);
                           }}
@@ -906,6 +919,16 @@ export default function ProducaoClient({
                         onChange={(e) => setEditDataProducao(e.target.value)}
                       />
                     </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm text-gray-500">Fragrância:</label>
+                      <input
+                        className="border border-blue-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        value={editFragrancia}
+                        onChange={(e) => setEditFragrancia(e.target.value)}
+                        placeholder="Opcional"
+                        style={{ maxWidth: 160 }}
+                      />
+                    </div>
                     {loteEditError && (
                       <span className="text-xs text-red-600">{loteEditError}</span>
                     )}
@@ -927,10 +950,18 @@ export default function ProducaoClient({
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-gray-500 mt-1">
-                    Data de produção:{" "}
-                    <strong>{detail.data_producao}</strong>
-                  </p>
+                  <div className="text-sm text-gray-500 mt-1">
+                    <p>
+                      Data de produção:{" "}
+                      <strong>{detail.data_producao}</strong>
+                    </p>
+                    {detail.fragancia && (
+                      <p>
+                        Fragrância:{" "}
+                        <strong>{detail.fragancia}</strong>
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
               <div className="flex gap-2 flex-wrap flex-shrink-0">

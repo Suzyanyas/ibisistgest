@@ -120,7 +120,10 @@ export default function ProdutoAcabadoClient({
   // Novo produto state
   const [novoProdutoNome, setNovoProdutoNome] = useState("");
   const [novoProdutoLoteId, setNovoProdutoLoteId] = useState("");
-  const [novoProdutoEstoqueInicial, setNovoProdutoEstoqueInicial] = useState("0");
+  const [novoProduto1l, setNovoProduto1l] = useState("0");
+  const [novoProduto2l, setNovoProduto2l] = useState("0");
+  const [novoProduto5l, setNovoProduto5l] = useState("0");
+  const [novoProduto20l, setNovoProduto20l] = useState("0");
   const [novoProdutoEstoqueSeg, setNovoProdutoEstoqueSeg] = useState("0");
   const [lotesConcluidos, setLotesConcluidos] = useState<
     LoteConcluidoWithFormula[]
@@ -131,7 +134,10 @@ export default function ProdutoAcabadoClient({
   // Retirada state
   const [retiradaProduto, setRetiradaProduto] =
     useState<ProdutoAcabadoWithFlag | null>(null);
-  const [retiradaQtd, setRetiradaQtd] = useState("1");
+  const [ret1l, setRet1l] = useState(0);
+  const [ret2l, setRet2l] = useState(0);
+  const [ret5l, setRet5l] = useState(0);
+  const [ret20l, setRet20l] = useState(0);
   const [retiradaLoading, setRetiradaLoading] = useState(false);
 
   // PDF / share loading
@@ -170,7 +176,10 @@ export default function ProdutoAcabadoClient({
   async function openNovoProduto() {
     setNovoProdutoNome("");
     setNovoProdutoLoteId("");
-    setNovoProdutoEstoqueInicial("0");
+    setNovoProduto1l("0");
+    setNovoProduto2l("0");
+    setNovoProduto5l("0");
+    setNovoProduto20l("0");
     setNovoProdutoEstoqueSeg("0");
     setModalError(null);
     setModal("novoProduto");
@@ -187,7 +196,10 @@ export default function ProdutoAcabadoClient({
 
   function openRetirada(produto: ProdutoAcabadoWithFlag) {
     setRetiradaProduto(produto);
-    setRetiradaQtd("1");
+    setRet1l(0);
+    setRet2l(0);
+    setRet5l(0);
+    setRet20l(0);
     setModalError(null);
     setModal("retirada");
   }
@@ -223,10 +235,11 @@ export default function ProdutoAcabadoClient({
   async function handleSaveNovoProduto() {
     if (!novoProdutoNome.trim())
       return setModalError("Nome é obrigatório.");
-    const estoqueInicialNum = parseInt(novoProdutoEstoqueInicial, 10);
+    const n1l = parseInt(novoProduto1l, 10) || 0;
+    const n2l = parseInt(novoProduto2l, 10) || 0;
+    const n5l = parseInt(novoProduto5l, 10) || 0;
+    const n20l = parseInt(novoProduto20l, 10) || 0;
     const estoqueSegNum = parseInt(novoProdutoEstoqueSeg, 10);
-    if (isNaN(estoqueInicialNum) || estoqueInicialNum < 0)
-      return setModalError("Estoque inicial deve ser um número inteiro positivo.");
     if (isNaN(estoqueSegNum) || estoqueSegNum < 0)
       return setModalError("Estoque de segurança deve ser um número inteiro positivo.");
     setModalError(null);
@@ -235,8 +248,11 @@ export default function ProdutoAcabadoClient({
       await createProdutoAcabado(
         novoProdutoNome.trim(),
         novoProdutoLoteId || null,
-        estoqueInicialNum,
-        estoqueSegNum
+        estoqueSegNum,
+        n1l,
+        n2l,
+        n5l,
+        n20l
       );
       closeModal();
       await refreshData();
@@ -249,15 +265,13 @@ export default function ProdutoAcabadoClient({
 
   async function handleConfirmarRetirada() {
     if (!retiradaProduto) return;
-    const qtdNum = parseInt(retiradaQtd, 10);
-    if (isNaN(qtdNum) || qtdNum <= 0)
-      return setModalError("Quantidade deve ser maior que zero.");
-    if (qtdNum > retiradaProduto.estoque_atual)
-      return setModalError("Quantidade maior que o estoque disponível.");
+    const total = ret1l + ret2l + ret5l + ret20l;
+    if (total <= 0)
+      return setModalError("Selecione pelo menos uma unidade.");
     setModalError(null);
     setRetiradaLoading(true);
     try {
-      await registrarRetirada(retiradaProduto.id, qtdNum);
+      await registrarRetirada(retiradaProduto.id, ret1l, ret2l, ret5l, ret20l);
       closeModal();
       await refreshData();
     } catch (e) {
@@ -400,8 +414,12 @@ export default function ProdutoAcabadoClient({
             <tr style={{ backgroundColor: "#1565C0" }}>
               {[
                 "Produto Acabado",
-                "Estoque",
-                "Est. Segurança",
+                "1L",
+                "2L",
+                "5L",
+                "20L",
+                "Total",
+                "Est. Seg.",
                 "Retirada",
               ].map((h) => (
                 <th
@@ -418,7 +436,7 @@ export default function ProdutoAcabadoClient({
             {produtos.length === 0 && (
               <tr>
                 <td
-                  colSpan={4}
+                  colSpan={8}
                   className="text-center py-10 text-gray-400"
                 >
                   Nenhum produto cadastrado.
@@ -453,6 +471,18 @@ export default function ProdutoAcabadoClient({
                     </div>
                   </td>
                   <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14 }}>
+                    {p.estoque_1l ?? 0}
+                  </td>
+                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14 }}>
+                    {p.estoque_2l ?? 0}
+                  </td>
+                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14 }}>
+                    {p.estoque_5l ?? 0}
+                  </td>
+                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14 }}>
+                    {p.estoque_20l ?? 0}
+                  </td>
+                  <td className="px-4 py-4 font-semibold" style={{ fontSize: 14, color: "#1565C0" }}>
                     {p.estoque_atual}
                   </td>
                   <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14 }}>
@@ -488,7 +518,7 @@ export default function ProdutoAcabadoClient({
                       {qtdHoje > 0 ? (
                         <strong>{qtdHoje} UND</strong>
                       ) : (
-                        "Registar"
+                        "Registrar"
                       )}
                     </button>
                   </td>
@@ -533,18 +563,49 @@ export default function ProdutoAcabadoClient({
               )}
             </Field>
 
-            <Field label="Estoque Inicial *">
-              <input
-                className={inputCls}
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                value={novoProdutoEstoqueInicial}
-                onChange={(e) =>
-                  setNovoProdutoEstoqueInicial(e.target.value.replace(/\D/g, ""))
-                }
-              />
-            </Field>
+            <p className="text-sm font-semibold" style={{ color: "#1A3A6B" }}>Estoque Inicial por Tamanho</p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="1L">
+                <input
+                  className={inputCls}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={novoProduto1l}
+                  onChange={(e) => setNovoProduto1l(e.target.value.replace(/\D/g, ""))}
+                />
+              </Field>
+              <Field label="2L">
+                <input
+                  className={inputCls}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={novoProduto2l}
+                  onChange={(e) => setNovoProduto2l(e.target.value.replace(/\D/g, ""))}
+                />
+              </Field>
+              <Field label="5L">
+                <input
+                  className={inputCls}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={novoProduto5l}
+                  onChange={(e) => setNovoProduto5l(e.target.value.replace(/\D/g, ""))}
+                />
+              </Field>
+              <Field label="20L">
+                <input
+                  className={inputCls}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={novoProduto20l}
+                  onChange={(e) => setNovoProduto20l(e.target.value.replace(/\D/g, ""))}
+                />
+              </Field>
+            </div>
 
             <Field label="Estoque de Segurança *">
               <input
@@ -581,9 +642,17 @@ export default function ProdutoAcabadoClient({
         </Modal>
       )}
 
-      {/* ── Modal: Registar Retirada ── */}
-      {modal === "retirada" && retiradaProduto && (
-        <Modal title="Registar Retirada" onClose={closeModal}>
+      {/* ── Modal: Registrar Retirada ── */}
+      {modal === "retirada" && retiradaProduto && (() => {
+        const retTotal = ret1l + ret2l + ret5l + ret20l;
+        const sizes: Array<{ label: string; value: number; set: (v: number) => void; max: number }> = [
+          { label: "1L", value: ret1l, set: setRet1l, max: retiradaProduto.estoque_1l ?? 0 },
+          { label: "2L", value: ret2l, set: setRet2l, max: retiradaProduto.estoque_2l ?? 0 },
+          { label: "5L", value: ret5l, set: setRet5l, max: retiradaProduto.estoque_5l ?? 0 },
+          { label: "20L", value: ret20l, set: setRet20l, max: retiradaProduto.estoque_20l ?? 0 },
+        ];
+        return (
+        <Modal title="Registrar Retirada" onClose={closeModal}>
           <div className="flex flex-col gap-4">
             <div
               className="rounded-lg px-4 py-3"
@@ -592,79 +661,60 @@ export default function ProdutoAcabadoClient({
               <p className="font-semibold text-sm" style={{ color: "#1A3A6B" }}>
                 {retiradaProduto.nome}
               </p>
-              <p className="text-sm text-gray-600 mt-0.5">
-                Estoque atual:{" "}
-                <strong>{retiradaProduto.estoque_atual}</strong>
-              </p>
+              <div className="flex gap-3 text-xs text-gray-600 mt-1">
+                <span>1L: <strong>{retiradaProduto.estoque_1l ?? 0}</strong></span>
+                <span>2L: <strong>{retiradaProduto.estoque_2l ?? 0}</strong></span>
+                <span>5L: <strong>{retiradaProduto.estoque_5l ?? 0}</strong></span>
+                <span>20L: <strong>{retiradaProduto.estoque_20l ?? 0}</strong></span>
+              </div>
             </div>
 
-            <Field label="Quantidade *">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setRetiradaQtd((v) =>
-                      String(Math.max(1, parseInt(v, 10) - 1))
-                    )
-                  }
-                  disabled={parseInt(retiradaQtd, 10) <= 1}
-                  className="flex-shrink-0 flex items-center justify-center rounded-lg border border-gray-300 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition font-bold text-gray-700 text-lg"
-                  style={{ minWidth: 40, minHeight: 40 }}
-                >
-                  −
-                </button>
-                <input
-                  className={`${inputCls} text-center font-semibold`}
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={retiradaQtd}
-                  onChange={(e) => {
-                    const raw = e.target.value.replace(/\D/g, "");
-                    setRetiradaQtd(raw);
-                  }}
-                  onBlur={() => {
-                    const n = parseInt(retiradaQtd, 10);
-                    if (isNaN(n) || n < 1) setRetiradaQtd("1");
-                    else if (n > retiradaProduto.estoque_atual)
-                      setRetiradaQtd(String(retiradaProduto.estoque_atual));
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() =>
-                    setRetiradaQtd((v) =>
-                      String(
-                        Math.min(
-                          retiradaProduto.estoque_atual,
-                          parseInt(v, 10) + 1
-                        )
-                      )
-                    )
-                  }
-                  disabled={
-                    parseInt(retiradaQtd, 10) >= retiradaProduto.estoque_atual
-                  }
-                  style={{
-                    width: "32px", height: "32px", minWidth: "32px", minHeight: "32px",
-                    borderRadius: "50%", border: "none", background: "white", color: "#1565C0",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: "20px", fontWeight: "700", flexShrink: 0,
-                    boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
-                    opacity: parseInt(retiradaQtd, 10) >= retiradaProduto.estoque_atual ? 0.4 : 1,
-                    cursor: parseInt(retiradaQtd, 10) >= retiradaProduto.estoque_atual ? "not-allowed" : "pointer",
-                  }}
-                >
-                  +
-                </button>
-              </div>
-            </Field>
+            {sizes.map((s) => (
+              <Field key={s.label} label={`${s.label} (máx: ${s.max})`}>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => s.set(Math.max(0, s.value - 1))}
+                    disabled={s.value <= 0}
+                    className="flex-shrink-0 flex items-center justify-center rounded-lg border border-gray-300 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition font-bold text-gray-700 text-lg"
+                    style={{ minWidth: 40, minHeight: 40 }}
+                  >
+                    −
+                  </button>
+                  <input
+                    className={`${inputCls} text-center font-semibold`}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={s.value}
+                    onChange={(e) => {
+                      const raw = parseInt(e.target.value.replace(/\D/g, ""), 10);
+                      s.set(isNaN(raw) ? 0 : Math.min(raw, s.max));
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => s.set(Math.min(s.max, s.value + 1))}
+                    disabled={s.value >= s.max}
+                    style={{
+                      width: "32px", height: "32px", minWidth: "32px", minHeight: "32px",
+                      borderRadius: "50%", border: "none", background: "white", color: "#1565C0",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: "20px", fontWeight: "700", flexShrink: 0,
+                      boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+                      opacity: s.value >= s.max ? 0.4 : 1,
+                      cursor: s.value >= s.max ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+              </Field>
+            ))}
 
-            {parseInt(retiradaQtd, 10) > retiradaProduto.estoque_atual && (
-              <p className="text-sm text-amber-700 bg-amber-50 rounded px-3 py-2">
-                Quantidade maior que o estoque disponível.
-              </p>
-            )}
+            <p className="text-sm font-semibold text-center" style={{ color: "#1A3A6B" }}>
+              Total: {retTotal} unidades
+            </p>
 
             <ErrorMsg msg={modalError} />
 
@@ -677,10 +727,7 @@ export default function ProdutoAcabadoClient({
               </button>
               <button
                 onClick={handleConfirmarRetirada}
-                disabled={
-                  retiradaLoading ||
-                  parseInt(retiradaQtd, 10) > retiradaProduto.estoque_atual
-                }
+                disabled={retiradaLoading || retTotal <= 0}
                 className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
                 style={{ backgroundColor: "#1565C0" }}
               >
@@ -689,7 +736,8 @@ export default function ProdutoAcabadoClient({
             </div>
           </div>
         </Modal>
-      )}
+        );
+      })()}
 
       {/* ── Modal: Histórico de Lotes ── */}
       {modal === "historico" && (

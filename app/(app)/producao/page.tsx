@@ -1,13 +1,14 @@
 import { Suspense } from "react";
 import { getLotesProducao } from "@/app/actions/producao";
+import { getUserRole } from "@/app/actions/auth-role";
 import ProducaoClient from "./ProducaoClient";
 
 export default async function ProducaoPage() {
   const lotes = await getLotesProducao();
-  // TODO: restore auth before delivery
+  const role = await getUserRole();
   return (
     <Suspense>
-      <ProducaoClient initialLotes={lotes} isAdmin={true} />
+      <ProducaoClient initialLotes={lotes} isAdmin={role === "admin"} />
     </Suspense>
   );
 }

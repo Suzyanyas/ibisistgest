@@ -30,14 +30,13 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // AUTH TEMPORARILY DISABLED for client testing — re-enable by uncommenting below
-  // if (!user && pathname !== "/login") {
-  //   return NextResponse.redirect(new URL("/login", request.url));
-  // }
+  if (!user && pathname !== "/login") {
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
 
-  // if (user && pathname === "/login") {
-  //   return NextResponse.redirect(new URL("/", request.url));
-  // }
+  if (user && pathname === "/login") {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
 
   return response;
 }
