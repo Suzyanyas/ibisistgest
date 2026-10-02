@@ -8,10 +8,10 @@ import { logout } from "@/app/actions/auth";
 
 const navLinks = [
   { label: "DASHBOARD", href: "/" },
+  { label: "ESTOQUE INSUMOS", href: "/estoque-insumos" },
   { label: "FÓRMULAS", href: "/formulas" },
   { label: "PRODUÇÃO", href: "/producao" },
   { label: "ENVASE", href: "/envase" },
-  { label: "ESTOQUE INSUMOS", href: "/estoque-insumos" },
   { label: "PRODUTO ACABADO", href: "/produto-acabado" },
 ];
 

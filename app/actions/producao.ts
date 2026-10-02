@@ -235,12 +235,11 @@ export async function updateLote(
   return data;
 }
 
-export async function getInsumosList() {
+export async function getInsumosList(tipo?: "producao" | "material") {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("insumos")
-    .select("id, nome, unidade")
-    .order("nome");
+  let query = supabase.from("insumos").select("id, nome, unidade").order("nome");
+  if (tipo) query = query.eq("tipo", tipo);
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data ?? [];
 }

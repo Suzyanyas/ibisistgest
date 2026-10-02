@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   getEnvaseByLote,
@@ -8,11 +9,19 @@ import {
   concluirEnvase,
   getHistoricoEnvases,
   getLoteInsumos,
+  getEmbalagemConfig,
+  saveEmbalagemConfig,
+  getEstoqueEmbalagens,
   type LoteEnvaseWithFormula,
   type EnvaseRow,
   type HistoricoEnvaseItem,
   type LoteInsumoItem,
+  type EmbalagemConfigItem,
+  type EstoqueEmbalagemItem,
 } from "@/app/actions/envase";
+import { getInsumosList } from "@/app/actions/producao";
+
+const TAMANHOS = ["1L", "2L", "5L", "20L"] as const;
 
 function formatDataEnvase(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -50,18 +59,28 @@ function Field({
 
 export default function EnvaseClient({
   initialLotes,
+  isAdmin,
 }: {
   initialLotes: LoteEnvaseWithFormula[];
+  isAdmin: boolean;
 }) {
   const searchParams = useSearchParams();
   const [lotes, setLotes] = useState<LoteEnvaseWithFormula[]>(initialLotes);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(true);
 
-  const [activeTab, setActiveTab] = useState<"em_curso" | "historico">("em_curso");
+  const [activeTab, setActiveTab] = useState<"em_curso" | "historico" | "embalagens">("em_curso");
   const [historico, setHistorico] = useState<HistoricoEnvaseItem[] | null>(null);
   const [historicoLoading, setHistoricoLoading] = useState(false);
   const [historicoError, setHistoricoError] = useState<string | null>(null);
+
+  const [embalagemConfig, setEmbalagemConfig] = useState<EmbalagemConfigItem[] | null>(null);
+  const [embalagemInsumos, setEmbalagemInsumos] = useState<{ id: string; nome: string; unidade: string }[]>([]);
+  const [embalagemSelecionado, setEmbalagemSelecionado] = useState<Record<string, string>>({});
+  const [embalagemLoading, setEmbalagemLoading] = useState(false);
+  const [embalagemError, setEmbalagemError] = useState<string | null>(null);
+  const [embalagemSaving, setEmbalagemSaving] = useState<string | null>(null);
+  const [embalagemSuccess, setEmbalagemSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     const loteId = searchParams.get("lote_id");
@@ -78,6 +97,8 @@ export default function EnvaseClient({
   const [qtd20l, setQtd20l] = useState(0);
   const [dataEnvase, setDataEnvase] = useState(nowStr());
 
+  const [estoqueEmbalagens, setEstoqueEmbalagens] = useState<Record<string, EstoqueEmbalagemItem>>({});
+
   const [insumosOpen, setInsumosOpen] = useState(false);
   const [insumosCache, setInsumosCache] = useState<Record<string, LoteInsumoItem[]>>({});
   const [insumosLoading, setInsumosLoading] = useState(false);
@@ -87,6 +108,8 @@ export default function EnvaseClient({
   const [concluirLoading, setConcluirLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [hasSaved, setHasSaved] = useState(false);
+  const [showConfirmConcluir, setShowConfirmConcluir] = useState(false);
 
   const selectedLote = lotes.find((l) => l.id === selectedId) ?? null;
 
@@ -98,6 +121,8 @@ export default function EnvaseClient({
     setDataEnvase(nowStr());
     setSuccessMsg(null);
     setErrorMsg(null);
+    setHasSaved(false);
+    setEstoqueEmbalagens({});
   }, []);
 
   const loadEnvase = useCallback(
@@ -105,7 +130,10 @@ export default function EnvaseClient({
       setFormLoading(true);
       resetForm();
       try {
-        const existing: EnvaseRow | null = await getEnvaseByLote(lote_id);
+        const [existing, estoque] = await Promise.all([
+          getEnvaseByLote(lote_id),
+          getEstoqueEmbalagens(),
+        ]);
         if (existing) {
           setQtd1l(existing.qtd_1l ?? 0);
           setQtd2l(existing.qtd_2l ?? 0);
@@ -113,6 +141,9 @@ export default function EnvaseClient({
           setQtd20l(existing.qtd_20l ?? 0);
           setDataEnvase(existing.data_envase ? existing.data_envase.slice(0, 16) : nowStr());
         }
+        const byTamanho: Record<string, EstoqueEmbalagemItem> = {};
+        for (const item of estoque) byTamanho[item.tamanho] = item;
+        setEstoqueEmbalagens(byTamanho);
       } catch (e) {
         setErrorMsg(e instanceof Error ? e.message : "Erro ao carregar envase.");
       } finally {
@@ -137,6 +168,7 @@ export default function EnvaseClient({
     setSaveLoading(true);
     try {
       await saveEnvase(selectedId, qtd1l, qtd2l, qtd5l, qtd20l, dataEnvase);
+      setHasSaved(true);
       setSuccessMsg("Envase salvo!");
       setTimeout(() => setSuccessMsg(null), 2000);
     } catch (e) {
@@ -159,6 +191,19 @@ export default function EnvaseClient({
     } finally {
       setConcluirLoading(false);
     }
+  }
+
+  function handleConcluirClick() {
+    if (!hasSaved) {
+      setShowConfirmConcluir(true);
+      return;
+    }
+    handleConcluir();
+  }
+
+  function handleConfirmConcluirMesmoAssim() {
+    setShowConfirmConcluir(false);
+    handleConcluir();
   }
 
   async function handleToggleInsumos() {
@@ -197,6 +242,47 @@ export default function EnvaseClient({
     }
   }
 
+  async function handleSelectEmbalagens() {
+    setActiveTab("embalagens");
+    if (embalagemConfig !== null) return;
+    setEmbalagemLoading(true);
+    setEmbalagemError(null);
+    try {
+      const [config, insumos] = await Promise.all([
+        getEmbalagemConfig(),
+        getInsumosList("producao"),
+      ]);
+      setEmbalagemConfig(config);
+      setEmbalagemInsumos(insumos);
+      const initial: Record<string, string> = {};
+      for (const tamanho of TAMANHOS) {
+        const existing = config.find((c) => c.tamanho === tamanho);
+        initial[tamanho] = existing?.insumo_id ?? "";
+      }
+      setEmbalagemSelecionado(initial);
+    } catch (e) {
+      setEmbalagemError(e instanceof Error ? e.message : "Erro ao carregar configuração.");
+    } finally {
+      setEmbalagemLoading(false);
+    }
+  }
+
+  async function handleSaveEmbalagem(tamanho: string) {
+    const insumo_id = embalagemSelecionado[tamanho];
+    if (!insumo_id) return;
+    setEmbalagemSaving(tamanho);
+    setEmbalagemError(null);
+    try {
+      await saveEmbalagemConfig(tamanho, insumo_id);
+      setEmbalagemSuccess("Configuração salva!");
+      setTimeout(() => setEmbalagemSuccess(null), 2000);
+    } catch (e) {
+      setEmbalagemError(e instanceof Error ? e.message : "Erro ao salvar.");
+    } finally {
+      setEmbalagemSaving(null);
+    }
+  }
+
   return (
     <div style={{ minHeight: "calc(100vh - 64px)" }}>
       {/* Tab bar */}
@@ -204,14 +290,15 @@ export default function EnvaseClient({
         className="flex border-b border-gray-200 bg-white"
         style={{ paddingLeft: 24, paddingRight: 24, paddingTop: 0 }}
       >
-        {(["em_curso", "historico"] as const).map((tab) => {
-          const label = tab === "em_curso" ? "Em Curso" : "Histórico";
+        {(isAdmin ? (["em_curso", "historico", "embalagens"] as const) : (["em_curso", "historico"] as const)).map((tab) => {
+          const label = tab === "em_curso" ? "Em Curso" : tab === "historico" ? "Histórico" : "Embalagens";
           const isActive = activeTab === tab;
           return (
             <button
               key={tab}
               onClick={() => {
                 if (tab === "historico") handleSelectHistorico();
+                else if (tab === "embalagens") handleSelectEmbalagens();
                 else setActiveTab("em_curso");
               }}
               className="relative px-5 py-3 text-sm font-semibold transition"
@@ -382,23 +469,48 @@ export default function EnvaseClient({
                     { label: "2L", value: qtd2l, set: setQtd2l },
                     { label: "5L", value: qtd5l, set: setQtd5l },
                     { label: "20L", value: qtd20l, set: setQtd20l },
-                  ].map(({ label, value, set }) => (
-                    <div
-                      key={label}
-                      className="flex flex-col gap-2 bg-white shadow-sm p-4"
-                      style={{ border: "1px solid #e5e7eb", borderRadius: 12 }}
-                    >
-                      <span style={{ fontWeight: 700, fontSize: 18, color: "#1565C0" }}>{label}</span>
-                      <input
-                        className={inputCls}
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={value}
-                        onChange={(e) => set(Math.max(0, Number(e.target.value)))}
-                      />
-                    </div>
-                  ))}
+                  ].map(({ label, value, set }) => {
+                    const estoque = estoqueEmbalagens[label];
+                    const insuficiente = estoque && value > estoque.estoque_atual;
+                    return (
+                      <div
+                        key={label}
+                        className="flex flex-col gap-2 bg-white shadow-sm p-4"
+                        style={{ border: "1px solid #e5e7eb", borderRadius: 12 }}
+                      >
+                        <span style={{ fontWeight: 700, fontSize: 18, color: "#1565C0" }}>{label}</span>
+                        <input
+                          className={inputCls}
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={value}
+                          onChange={(e) => {
+                            set(Math.max(0, Number(e.target.value)));
+                            setHasSaved(false);
+                          }}
+                        />
+                        {!estoque && (
+                          <p className="text-xs" style={{ color: "#9E9E9E" }}>
+                            Embalagem não configurada
+                          </p>
+                        )}
+                        {insuficiente && (
+                          <p style={{ color: "#E65100", fontSize: 11 }}>
+                            ⚠ Estoque insuficiente: {estoque.estoque_atual} disponíveis
+                            <br />
+                            <Link
+                              href="/estoque-insumos"
+                              className="hover:underline"
+                              style={{ color: "#E65100", fontWeight: 600, whiteSpace: "nowrap" }}
+                            >
+                              Atualizar estoque →
+                            </Link>
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {/* Summary */}
@@ -464,7 +576,7 @@ export default function EnvaseClient({
                     {saveLoading ? "Salvando..." : "SALVAR"}
                   </button>
                   <button
-                    onClick={handleConcluir}
+                    onClick={handleConcluirClick}
                     disabled={!atLeastOneQtd || concluirLoading || saveLoading}
                     className="flex-1 px-5 py-2 rounded-lg text-white text-sm font-bold hover:brightness-110 transition disabled:opacity-60"
                     style={{ backgroundColor: "#2E7D32", cursor: "pointer" }}
@@ -475,6 +587,41 @@ export default function EnvaseClient({
               </div>
             )}
           </main>
+        </div>
+      )}
+
+      {/* ── Confirm: concluir sem salvar ── */}
+      {showConfirmConcluir && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+        >
+          <div
+            className="bg-white w-full max-w-sm"
+            style={{ borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
+          >
+            <div className="px-6 py-5">
+              <p className="text-sm" style={{ color: "#1A3A6B" }}>
+                As quantidades não foram salvas. Tens a certeza que queres
+                concluir sem salvar?
+              </p>
+              <div className="flex gap-3 pt-5 justify-end">
+                <button
+                  onClick={() => setShowConfirmConcluir(false)}
+                  className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleConfirmConcluirMesmoAssim}
+                  className="px-4 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition"
+                  style={{ backgroundColor: "#2E7D32" }}
+                >
+                  Concluir mesmo assim
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -530,6 +677,77 @@ export default function EnvaseClient({
                 </table>
               </div>
             )
+          )}
+        </div>
+      )}
+
+      {/* ── Embalagens tab ── */}
+      {activeTab === "embalagens" && isAdmin && (
+        <div style={{ padding: 24 }}>
+          {embalagemLoading && (
+            <p className="text-gray-400 text-sm">Carregando configuração...</p>
+          )}
+          {embalagemError && (
+            <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mb-4">
+              {embalagemError}
+            </p>
+          )}
+          {embalagemSuccess && (
+            <p className="text-sm text-green-700 bg-green-50 rounded px-3 py-2 mb-4">
+              {embalagemSuccess}
+            </p>
+          )}
+          {!embalagemLoading && embalagemConfig !== null && (
+            <div className="overflow-x-auto rounded-lg shadow max-w-2xl">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr style={{ backgroundColor: "#1565C0" }}>
+                    {["Tamanho", "Insumo associado", ""].map((h) => (
+                      <th
+                        key={h}
+                        className="text-left text-white font-bold px-4 py-3"
+                        style={{ fontSize: 13 }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {TAMANHOS.map((tamanho, idx) => (
+                    <tr key={tamanho} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
+                      <td className="px-4 py-3 font-medium text-gray-800">{tamanho}</td>
+                      <td className="px-4 py-3">
+                        <select
+                          className={inputCls}
+                          value={embalagemSelecionado[tamanho] ?? ""}
+                          onChange={(e) =>
+                            setEmbalagemSelecionado((prev) => ({ ...prev, [tamanho]: e.target.value }))
+                          }
+                        >
+                          <option value="">— Selecione —</option>
+                          {embalagemInsumos.map((i) => (
+                            <option key={i.id} value={i.id}>
+                              {i.nome} ({i.unidade})
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => handleSaveEmbalagem(tamanho)}
+                          disabled={!embalagemSelecionado[tamanho] || embalagemSaving === tamanho}
+                          className="px-3 py-1.5 rounded text-white text-xs font-bold hover:brightness-110 transition disabled:opacity-60"
+                          style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
+                        >
+                          {embalagemSaving === tamanho ? "Salvando..." : "Salvar"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

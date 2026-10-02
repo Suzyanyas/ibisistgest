@@ -8,7 +8,7 @@ export type FormulaRow = Tables<"formulas">;
 export type InsumoBasic = Pick<Tables<"insumos">, "id" | "nome" | "unidade">;
 
 export type FormulaInsumoRow = Tables<"formula_insumos"> & {
-  insumos: { nome: string; unidade: string; custo_unitario: number | null } | null;
+  insumos: { nome: string; unidade: string; custo_unitario: number | null; custo_unidade: string | null } | null;
 };
 
 export type FormulaWithInsumos = FormulaRow & {
@@ -31,7 +31,7 @@ export async function getFormulaWithInsumos(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("formulas")
-    .select("*, formula_insumos(*, insumos(nome, unidade, custo_unitario))")
+    .select("*, formula_insumos(*, insumos(nome, unidade, custo_unitario, custo_unidade))")
     .eq("id", id)
     .single();
   if (error) throw new Error(error.message);

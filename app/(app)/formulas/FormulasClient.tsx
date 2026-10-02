@@ -17,12 +17,22 @@ import {
   type FormulaInsumoRow,
   type InsumoBasic,
 } from "@/app/actions/formulas";
-import { updateCustoUnitario } from "@/app/actions/insumos";
+import { updateCustoInsumo } from "@/app/actions/insumos";
 
 type ModalType = null | "nova" | "editar" | "addInsumo" | "excluir" | "editInsumo" | "removeInsumo";
 
 const RENDIMENTO_UNIDADES = ["L", "KG", "UN"];
 const INSUMO_UNIDADES = ["KG", "L", "G", "ML", "PCT", "UN"];
+
+function convertToBase(quantidade: number, fromUnit: string, toUnit: string): number {
+  if (fromUnit === toUnit) return quantidade;
+  if (fromUnit === "G" && toUnit === "KG") return quantidade / 1000;
+  if (fromUnit === "KG" && toUnit === "G") return quantidade * 1000;
+  if (fromUnit === "ML" && toUnit === "L") return quantidade / 1000;
+  if (fromUnit === "L" && toUnit === "ML") return quantidade * 1000;
+  console.warn(`convertToBase: unidades incompatíveis (${fromUnit} -> ${toUnit})`);
+  return 0;
+}
 
 // ─── Shared UI ─────────────────────────────────────────────────────────────────
 
@@ -179,6 +189,7 @@ export default function FormulasClient({
   // Inline custo_unitario editing
   const [editingCustoId, setEditingCustoId] = useState<string | null>(null);
   const [editingCustoValue, setEditingCustoValue] = useState("");
+  const [editingCustoUnidade, setEditingCustoUnidade] = useState("KG");
   const [custoSaving, setCustoSaving] = useState(false);
   const [custoError, setCustoError] = useState<string | null>(null);
 
@@ -432,7 +443,7 @@ export default function FormulasClient({
     setCustoError(null);
     setCustoSaving(true);
     try {
-      await updateCustoUnitario(insumoId, val);
+      await updateCustoInsumo(insumoId, val, editingCustoUnidade);
       await reloadDetail();
       setEditingCustoId(null);
     } catch (e) {
@@ -641,7 +652,9 @@ export default function FormulasClient({
                   )}
                   {detail.formula_insumos.map((fi, idx) => {
                     const custoUnit = Number(fi.insumos?.custo_unitario ?? 0);
-                    const custoTotal = fi.quantidade * custoUnit;
+                    const custoUnidade = fi.insumos?.custo_unidade ?? null;
+                    const qtdConvertida = custoUnidade ? convertToBase(fi.quantidade, fi.unidade, custoUnidade) : 0;
+                    const custoTotal = qtdConvertida * custoUnit;
                     const isEditingThis = editingCustoId === fi.id;
                     return (
                       <tr key={fi.id} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
@@ -654,12 +667,21 @@ export default function FormulasClient({
                               {isEditingThis ? (
                                 <div className="flex items-center gap-1.5">
                                   <input
-                                    className="border border-blue-400 rounded px-2 py-1 text-sm w-24 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="border border-blue-400 rounded px-2 py-1 text-sm w-20 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     value={editingCustoValue}
                                     onChange={(e) => setEditingCustoValue(e.target.value)}
                                     placeholder="0,00"
                                     autoFocus
                                   />
+                                  <select
+                                    className="border border-blue-400 rounded px-1 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    value={editingCustoUnidade}
+                                    onChange={(e) => setEditingCustoUnidade(e.target.value)}
+                                  >
+                                    {INSUMO_UNIDADES.map((u) => (
+                                      <option key={u} value={u}>{u}</option>
+                                    ))}
+                                  </select>
                                   <button
                                     onClick={() => handleSaveCusto(fi.insumo_id)}
                                     disabled={custoSaving}
@@ -679,9 +701,17 @@ export default function FormulasClient({
                                 </div>
                               ) : (
                                 <div className="flex items-center gap-1.5">
-                                  <span>{custoUnit.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                                  <span>
+                                    R$ {custoUnit.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                    {custoUnidade ? ` / ${custoUnidade}` : ""}
+                                  </span>
                                   <button
-                                    onClick={() => { setEditingCustoId(fi.id); setEditingCustoValue(String(custoUnit)); setCustoError(null); }}
+                                    onClick={() => {
+                                      setEditingCustoId(fi.id);
+                                      setEditingCustoValue(String(custoUnit));
+                                      setEditingCustoUnidade(custoUnidade ?? fi.unidade);
+                                      setCustoError(null);
+                                    }}
                                     className="text-blue-400 hover:text-blue-600 transition leading-none"
                                     title="Editar custo unitário"
                                     style={{ fontSize: 14 }}
@@ -738,10 +768,12 @@ export default function FormulasClient({
                     );
                   })}
                   {isAdmin && detail.formula_insumos.length > 0 && (() => {
-                    const totalCusto = detail.formula_insumos.reduce(
-                      (sum, fi) => sum + fi.quantidade * Number(fi.insumos?.custo_unitario ?? 0),
-                      0
-                    );
+                    const totalCusto = detail.formula_insumos.reduce((sum, fi) => {
+                      const custoUnit = Number(fi.insumos?.custo_unitario ?? 0);
+                      const custoUnidade = fi.insumos?.custo_unidade ?? null;
+                      const qtdConvertida = custoUnidade ? convertToBase(fi.quantidade, fi.unidade, custoUnidade) : 0;
+                      return sum + qtdConvertida * custoUnit;
+                    }, 0);
                     return (
                       <tr style={{ backgroundColor: "#E8F4FF", borderTop: "2px solid #1565C0" }}>
                         <td colSpan={4} className="px-4 py-3 font-bold text-sm" style={{ color: "#1A3A6B" }}>

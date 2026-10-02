@@ -2,16 +2,27 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Trash2 } from "lucide-react";
 import {
   createInsumo,
   novaEntrada,
   atualizarEstoque,
+  updateInsumo,
+  deleteInsumo,
   getMovimentos,
+  getInsumos,
+  getInsumosAbaixoMinimo,
   type InsumoWithFlag,
   type Movimento,
 } from "@/app/actions/insumos";
 
-type ModalType = null | "novo" | "entrada" | "atualizacao" | "historico";
+type ModalType = null | "novo" | "entrada" | "atualizacao" | "historico" | "editar" | "excluir" | "relatorio";
+type TabType = "producao" | "material";
+
+const TABS: { key: TabType; label: string }[] = [
+  { key: "producao", label: "Insumos de Produção" },
+  { key: "material", label: "Materiais & EPI" },
+];
 
 const today = () => new Date().toISOString().split("T")[0];
 
@@ -104,17 +115,43 @@ export default function EstoqueInsumosClient({
   const [isPending, startTransition] = useTransition();
 
   const [insumos, setInsumos] = useState<InsumoWithFlag[]>(initialInsumos);
+  const [activeTab, setActiveTab] = useState<TabType>("producao");
+  const [loadingTab, setLoadingTab] = useState(false);
   const [modal, setModal] = useState<ModalType>(null);
   const [selected, setSelected] = useState<InsumoWithFlag | null>(null);
   const [movimentos, setMovimentos] = useState<Movimento[]>([]);
   const [loadingMovimentos, setLoadingMovimentos] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [relatorio, setRelatorio] = useState<{
+    producao: InsumoWithFlag[];
+    material: InsumoWithFlag[];
+  } | null>(null);
+  const [relatorioLoading, setRelatorioLoading] = useState(false);
+  const [relatorioError, setRelatorioError] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+
+  async function handleTabChange(tab: TabType, force = false) {
+    if (tab === activeTab && !force) return;
+    setActiveTab(tab);
+    setLoadingTab(true);
+    try {
+      const data = await getInsumos(tab);
+      setInsumos(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao carregar insumos.");
+    } finally {
+      setLoadingTab(false);
+    }
+  }
+
   // ── Form state: Novo Insumo ──
   const [novoNome, setNovoNome] = useState("");
   const [novoUnidade, setNovoUnidade] = useState("KG");
   const [novoEstoqueAtual, setNovoEstoqueAtual] = useState("");
   const [novoEstoqueSeguranca, setNovoEstoqueSeguranca] = useState("");
+  const [novoCustoUnitario, setNovoCustoUnitario] = useState("");
+  const [novoCustoUnidade, setNovoCustoUnidade] = useState("KG");
 
   // ── Form state: Entrada ──
   const [entradaQtd, setEntradaQtd] = useState("");
@@ -126,6 +163,17 @@ export default function EstoqueInsumosClient({
   const [atuData, setAtuData] = useState(today());
   const [atuObs, setAtuObs] = useState("");
 
+  // ── Form state: Editar Insumo ──
+  const [editNome, setEditNome] = useState("");
+  const [editUnidade, setEditUnidade] = useState("KG");
+  const [editEstoqueSeguranca, setEditEstoqueSeguranca] = useState("");
+  const [editCustoUnitario, setEditCustoUnitario] = useState("");
+  const [editCustoUnidade, setEditCustoUnidade] = useState("KG");
+
+  // ── PIN confirmation (Editar / Excluir) ──
+  const [pin, setPin] = useState("");
+  const [pinError, setPinError] = useState<string | null>(null);
+
   function closeModal() {
     setModal(null);
     setSelected(null);
@@ -134,13 +182,24 @@ export default function EstoqueInsumosClient({
     setNovoUnidade("KG");
     setNovoEstoqueAtual("");
     setNovoEstoqueSeguranca("");
+    setNovoCustoUnitario("");
+    setNovoCustoUnidade("KG");
     setEntradaQtd("");
     setEntradaData(today());
     setEntradaObs("");
     setAtuQtd("");
     setAtuData(today());
     setAtuObs("");
+    setEditNome("");
+    setEditUnidade("KG");
+    setEditEstoqueSeguranca("");
+    setEditCustoUnitario("");
+    setEditCustoUnidade("KG");
+    setPin("");
+    setPinError(null);
     setMovimentos([]);
+    setRelatorio(null);
+    setRelatorioError(null);
   }
 
   function openEntrada(insumo: InsumoWithFlag) {
@@ -161,6 +220,27 @@ export default function EstoqueInsumosClient({
     setModal("atualizacao");
   }
 
+  function openEditar(insumo: InsumoWithFlag) {
+    setSelected(insumo);
+    setEditNome(insumo.nome);
+    setEditUnidade(insumo.unidade);
+    setEditEstoqueSeguranca(String(insumo.estoque_seguranca));
+    setEditCustoUnitario(insumo.custo_unitario != null ? String(insumo.custo_unitario) : "");
+    setEditCustoUnidade(insumo.custo_unidade ?? "KG");
+    setPin("");
+    setPinError(null);
+    setError(null);
+    setModal("editar");
+  }
+
+  function openExcluir(insumo: InsumoWithFlag) {
+    setSelected(insumo);
+    setPin("");
+    setPinError(null);
+    setError(null);
+    setModal("excluir");
+  }
+
   async function openHistorico(insumo: InsumoWithFlag) {
     setSelected(insumo);
     setModal("historico");
@@ -176,6 +256,122 @@ export default function EstoqueInsumosClient({
     }
   }
 
+  async function openRelatorio() {
+    setModal("relatorio");
+    setRelatorioLoading(true);
+    setRelatorioError(null);
+    setRelatorio(null);
+    try {
+      const data = await getInsumosAbaixoMinimo();
+      setRelatorio(data);
+    } catch (e) {
+      setRelatorioError(e instanceof Error ? e.message : "Erro ao gerar relatório.");
+    } finally {
+      setRelatorioLoading(false);
+    }
+  }
+
+  function buildRelatorioLines(items: InsumoWithFlag[]): string[] {
+    return items.map(
+      (ins) =>
+        `${ins.nome}: ${ins.estoque_atual} ${ins.unidade} (mín: ${ins.estoque_seguranca} ${ins.unidade})`
+    );
+  }
+
+  function buildRelatorioText(): string {
+    const header = `ESTOQUE BAIXO — Ibilimp\nData: ${formatDate(today())}`;
+    const producaoLines = relatorio ? buildRelatorioLines(relatorio.producao) : [];
+    const materialLines = relatorio ? buildRelatorioLines(relatorio.material) : [];
+    const producaoBlock =
+      producaoLines.length > 0
+        ? producaoLines.map((l) => `• ${l}`).join("\n")
+        : "Todos em estoque normal ✓";
+    const materialBlock =
+      materialLines.length > 0
+        ? materialLines.map((l) => `• ${l}`).join("\n")
+        : "Todos em estoque normal ✓";
+    return `${header}\n\nINSUMOS DE PRODUÇÃO:\n${producaoBlock}\n\nMATERIAIS & EPI:\n${materialBlock}`;
+  }
+
+  async function handleBaixarRelatorioPdf() {
+    if (!relatorio) return;
+    setPdfLoading(true);
+    try {
+      const { default: jsPDF } = await import("jspdf");
+      const doc = new jsPDF();
+
+      doc.setFontSize(16);
+      doc.setTextColor(26, 58, 107);
+      doc.text("ESTOQUE BAIXO — Ibilimp", 20, 20);
+
+      doc.setFontSize(11);
+      doc.setTextColor(80, 80, 80);
+      doc.text(`Data: ${formatDate(today())}`, 20, 30);
+
+      doc.setDrawColor(21, 101, 192);
+      doc.line(20, 34, 190, 34);
+
+      let y = 44;
+      doc.setFontSize(12);
+      doc.setTextColor(21, 101, 192);
+      doc.text("INSUMOS DE PRODUÇÃO:", 20, y);
+      y += 8;
+
+      doc.setFontSize(11);
+      doc.setTextColor(30, 30, 30);
+      const producaoLines = buildRelatorioLines(relatorio.producao);
+      if (producaoLines.length === 0) {
+        doc.setTextColor(27, 94, 32);
+        doc.text("Todos em estoque normal ✓", 20, y);
+        doc.setTextColor(30, 30, 30);
+        y += 8;
+      } else {
+        producaoLines.forEach((line) => {
+          doc.text(`• ${line}`, 20, y);
+          y += 7;
+        });
+      }
+
+      y += 6;
+      doc.setFontSize(12);
+      doc.setTextColor(21, 101, 192);
+      doc.text("MATERIAIS & EPI:", 20, y);
+      y += 8;
+
+      doc.setFontSize(11);
+      doc.setTextColor(30, 30, 30);
+      const materialLines = buildRelatorioLines(relatorio.material);
+      if (materialLines.length === 0) {
+        doc.setTextColor(27, 94, 32);
+        doc.text("Todos em estoque normal ✓", 20, y);
+        doc.setTextColor(30, 30, 30);
+        y += 8;
+      } else {
+        materialLines.forEach((line) => {
+          doc.text(`• ${line}`, 20, y);
+          y += 7;
+        });
+      }
+
+      const pageHeight = doc.internal.pageSize.getHeight();
+      doc.setFontSize(9);
+      doc.setTextColor(150, 150, 150);
+      doc.text("Ibisist - Sistema de Gestão Ibilimp", 20, pageHeight - 10);
+
+      doc.save(`estoque-baixo-${today()}.pdf`);
+    } catch (e) {
+      setRelatorioError(e instanceof Error ? e.message : "Erro ao gerar PDF.");
+    } finally {
+      setPdfLoading(false);
+    }
+  }
+
+  function handleRelatorioWhatsapp() {
+    const text = buildRelatorioText();
+    const encoded = encodeURIComponent(text);
+    window.open(`https://wa.me/?text=${encoded}`, "_blank");
+  }
+
   function refreshInsumos() {
     startTransition(() => {
       router.refresh();
@@ -189,12 +385,18 @@ export default function EstoqueInsumosClient({
     const atual = parseFloat(novoEstoqueAtual);
     const seg = parseFloat(novoEstoqueSeguranca);
     if (isNaN(atual) || isNaN(seg)) return setError("Estoque deve ser numérico.");
+    const custoRaw = novoCustoUnitario.trim().replace(",", ".");
+    const custo = custoRaw ? parseFloat(custoRaw) : 0;
+    if (isNaN(custo) || custo < 0) return setError("Custo unitário inválido.");
     try {
       await createInsumo({
         nome: novoNome.trim(),
         unidade: novoUnidade,
         estoque_atual: atual,
         estoque_seguranca: seg,
+        custo_unitario: custo,
+        custo_unidade: novoCustoUnidade,
+        tipo: activeTab,
       });
       const novoItem: InsumoWithFlag = {
         id: crypto.randomUUID(),
@@ -203,7 +405,9 @@ export default function EstoqueInsumosClient({
         unidade: novoUnidade,
         estoque_atual: atual,
         estoque_seguranca: seg,
-        custo_unitario: null,
+        custo_unitario: custo,
+        custo_unidade: novoCustoUnidade,
+        tipo: activeTab,
         estoque_baixo: atual < seg,
       };
       setInsumos((prev) =>
@@ -269,6 +473,51 @@ export default function EstoqueInsumosClient({
     }
   }
 
+  // ── Save: Editar Insumo ──
+  async function handleSaveEditar() {
+    setError(null);
+    setPinError(null);
+    if (!selected) return;
+    if (pin !== "1234") return setPinError("PIN incorreto");
+    if (!editNome.trim()) return setError("Nome é obrigatório.");
+    const seg = parseFloat(editEstoqueSeguranca);
+    if (isNaN(seg)) return setError("Estoque de segurança deve ser numérico.");
+    const custoRaw = editCustoUnitario.trim().replace(",", ".");
+    const custo = custoRaw ? parseFloat(custoRaw) : undefined;
+    if (custoRaw && (custo === undefined || isNaN(custo) || custo < 0)) {
+      return setError("Custo unitário inválido.");
+    }
+    try {
+      await updateInsumo(
+        selected.id,
+        editNome.trim(),
+        editUnidade,
+        seg,
+        custo,
+        custo !== undefined ? editCustoUnidade : undefined
+      );
+      closeModal();
+      await handleTabChange(activeTab, true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao salvar.");
+    }
+  }
+
+  // ── Confirm: Excluir Insumo ──
+  async function handleConfirmExcluir() {
+    setError(null);
+    setPinError(null);
+    if (!selected) return;
+    if (pin !== "1234") return setPinError("PIN incorreto");
+    try {
+      await deleteInsumo(selected.id);
+      closeModal();
+      await handleTabChange(activeTab, true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao excluir.");
+    }
+  }
+
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="p-6 max-w-screen-xl mx-auto">
@@ -277,13 +526,43 @@ export default function EstoqueInsumosClient({
         <h1 className="text-2xl font-bold" style={{ color: "#1A3A6B" }}>
           Estoque de Insumos
         </h1>
-        <button
-          onClick={() => { setError(null); setModal("novo"); }}
-          className="px-4 py-2 rounded-lg text-white text-sm font-bold shadow hover:brightness-110 transition"
-          style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
-        >
-          + Novo Insumo
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={openRelatorio}
+            className="px-4 py-2 rounded-lg text-white text-sm font-bold shadow hover:brightness-110 transition"
+            style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
+          >
+            Relatório de Estoque Baixo
+          </button>
+          <button
+            onClick={() => { setError(null); setModal("novo"); }}
+            className="px-4 py-2 rounded-lg text-white text-sm font-bold shadow hover:brightness-110 transition"
+            style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
+          >
+            + Novo Insumo
+          </button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6">
+        {TABS.map((tab) => {
+          const isActive = tab.key === activeTab;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => handleTabChange(tab.key)}
+              className="px-4 py-2 rounded-lg text-sm font-semibold transition"
+              style={
+                isActive
+                  ? { backgroundColor: "#1565C0", color: "#ffffff", cursor: "pointer" }
+                  : { border: "1px solid #E5E7EB", color: "#6B7280", cursor: "pointer" }
+              }
+            >
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Table */}
@@ -305,14 +584,22 @@ export default function EstoqueInsumosClient({
             </tr>
           </thead>
           <tbody>
-            {insumos.length === 0 && (
+            {loadingTab && (
+              <tr>
+                <td colSpan={isAdmin ? 6 : 5} className="text-center py-10 text-gray-400">
+                  Carregando...
+                </td>
+              </tr>
+            )}
+            {!loadingTab && insumos.length === 0 && (
               <tr>
                 <td colSpan={isAdmin ? 6 : 5} className="text-center py-10 text-gray-400">
                   Nenhum insumo cadastrado.
                 </td>
               </tr>
             )}
-            {insumos.map((ins, idx) => {
+            {!loadingTab &&
+              insumos.map((ins, idx) => {
               const rowBg = ins.estoque_baixo
                 ? "#FFF3CD"
                 : idx % 2 === 0
@@ -365,6 +652,41 @@ export default function EstoqueInsumosClient({
                     >
                       Atualizar
                     </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => openEditar(ins)}
+                        className="px-3 py-1 rounded-lg text-white text-xs font-semibold transition"
+                        style={{ backgroundColor: "#1976D2", cursor: "pointer" }}
+                        onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#1259A0")}
+                        onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#1976D2")}
+                      >
+                        Editar
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button
+                        onClick={() => openExcluir(ins)}
+                        title="Excluir insumo"
+                        style={{
+                          width: "32px",
+                          height: "32px",
+                          minWidth: "32px",
+                          minHeight: "32px",
+                          borderRadius: "50%",
+                          backgroundColor: "#C62828",
+                          color: "white",
+                          border: "none",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          padding: "0",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               );
@@ -389,7 +711,10 @@ export default function EstoqueInsumosClient({
               <select
                 className={inputCls}
                 value={novoUnidade}
-                onChange={(e) => setNovoUnidade(e.target.value)}
+                onChange={(e) => {
+                  setNovoUnidade(e.target.value);
+                  setNovoCustoUnidade(e.target.value);
+                }}
               >
                 {["KG", "L", "G", "ML", "PCT", "UN"].map((u) => (
                   <option key={u} value={u}>
@@ -420,6 +745,33 @@ export default function EstoqueInsumosClient({
                 placeholder="0"
               />
             </Field>
+            {isAdmin && (
+              <Field label="Custo Unitário (R$)">
+                <input
+                  className={inputCls}
+                  type="text"
+                  inputMode="decimal"
+                  value={novoCustoUnitario}
+                  onChange={(e) => setNovoCustoUnitario(e.target.value)}
+                  placeholder="0,00"
+                />
+              </Field>
+            )}
+            {isAdmin && (
+              <Field label="Unidade do Custo">
+                <select
+                  className={inputCls}
+                  value={novoCustoUnidade}
+                  onChange={(e) => setNovoCustoUnidade(e.target.value)}
+                >
+                  {["KG", "L", "G", "ML", "UN", "PCT"].map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
             {error && (
               <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2">
                 {error}
@@ -610,6 +962,169 @@ export default function EstoqueInsumosClient({
         </Modal>
       )}
 
+      {/* ── Modal: Editar Insumo ── */}
+      {modal === "editar" && selected && (
+        <Modal title="Editar Insumo" onClose={closeModal}>
+          <div className="flex flex-col gap-4">
+            <Field label="Nome *">
+              <input
+                className={inputCls}
+                value={editNome}
+                onChange={(e) => setEditNome(e.target.value)}
+                placeholder="Nome do insumo"
+              />
+            </Field>
+            <Field label="Unidade *">
+              <select
+                className={inputCls}
+                value={editUnidade}
+                onChange={(e) => setEditUnidade(e.target.value)}
+              >
+                {["KG", "L", "G", "ML", "PCT", "UN"].map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Estoque de Segurança *">
+              <input
+                className={inputCls}
+                type="number"
+                min="0"
+                step="any"
+                value={editEstoqueSeguranca}
+                onChange={(e) => setEditEstoqueSeguranca(e.target.value)}
+                placeholder="0"
+              />
+            </Field>
+            {isAdmin && (
+              <Field label="Custo Unitário (R$)">
+                <input
+                  className={inputCls}
+                  type="text"
+                  inputMode="decimal"
+                  value={editCustoUnitario}
+                  onChange={(e) => setEditCustoUnitario(e.target.value)}
+                  placeholder="0,00"
+                />
+              </Field>
+            )}
+            {isAdmin && (
+              <Field label="Unidade do Custo">
+                <select
+                  className={inputCls}
+                  value={editCustoUnidade}
+                  onChange={(e) => setEditCustoUnidade(e.target.value)}
+                >
+                  {["KG", "L", "G", "ML", "UN", "PCT"].map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            <Field label="PIN de confirmação">
+              <input
+                className={inputCls}
+                type="password"
+                maxLength={4}
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                placeholder="••••"
+              />
+              {pinError && (
+                <p className="text-sm text-red-600 mt-1">{pinError}</p>
+              )}
+            </Field>
+            {error && (
+              <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2">
+                {error}
+              </p>
+            )}
+            <div className="flex gap-3 pt-2 justify-end">
+              <button
+                onClick={closeModal}
+                className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition cursor-pointer"
+              >
+                CANCELAR
+              </button>
+              <button
+                onClick={handleSaveEditar}
+                disabled={isPending}
+                className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
+                style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
+              >
+                {isPending ? "Salvando..." : "SALVAR"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Modal: Excluir Insumo ── */}
+      {modal === "excluir" && selected && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+        >
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-sm">
+            <div className="px-6 py-5 flex flex-col gap-4">
+              <div className="flex items-start gap-3">
+                <span className="text-3xl flex-shrink-0 mt-0.5" aria-hidden="true">
+                  ⚠️
+                </span>
+                <div>
+                  <h2 className="font-bold text-lg mb-1" style={{ color: "#B71C1C" }}>
+                    Excluir Insumo
+                  </h2>
+                  <p className="text-sm text-gray-700">
+                    Tem certeza que deseja excluir{" "}
+                    <strong>{selected.nome}</strong>? Esta ação não pode ser
+                    desfeita.
+                  </p>
+                </div>
+              </div>
+              <Field label="PIN de confirmação">
+                <input
+                  className={inputCls}
+                  type="password"
+                  maxLength={4}
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  placeholder="••••"
+                />
+                {pinError && (
+                  <p className="text-sm text-red-600 mt-1">{pinError}</p>
+                )}
+              </Field>
+              {error && (
+                <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2">
+                  {error}
+                </p>
+              )}
+              <div className="flex gap-3 pt-2 justify-end">
+                <button
+                  onClick={closeModal}
+                  className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition cursor-pointer"
+                >
+                  CANCELAR
+                </button>
+                <button
+                  onClick={handleConfirmExcluir}
+                  disabled={isPending}
+                  className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
+                  style={{ backgroundColor: "#C62828", cursor: "pointer" }}
+                >
+                  {isPending ? "Excluindo..." : "EXCLUIR"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Modal: Histórico ── */}
       {modal === "historico" && selected && (
         <div
@@ -684,6 +1199,92 @@ export default function EstoqueInsumosClient({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Modal: Relatório de Estoque Baixo ── */}
+      {modal === "relatorio" && (
+        <Modal title="Relatório de Estoque Baixo" onClose={closeModal}>
+          <div className="flex flex-col gap-4">
+            {relatorioLoading && (
+              <p className="text-center text-gray-400 py-8">Carregando...</p>
+            )}
+            {relatorioError && (
+              <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2">
+                {relatorioError}
+              </p>
+            )}
+            {!relatorioLoading && relatorio && (
+              <>
+                <p className="text-sm text-gray-500">
+                  Data: <strong>{formatDate(today())}</strong>
+                </p>
+
+                <div>
+                  <p className="font-semibold text-sm mb-1" style={{ color: "#1A3A6B" }}>
+                    Insumos de Produção:
+                  </p>
+                  {relatorio.producao.length === 0 ? (
+                    <p className="text-sm font-medium" style={{ color: "#1B5E20" }}>
+                      Todos em estoque normal ✓
+                    </p>
+                  ) : (
+                    <ul className="text-sm text-gray-700 flex flex-col gap-1">
+                      {relatorio.producao.map((ins) => (
+                        <li key={ins.id}>
+                          • {ins.nome}: {ins.estoque_atual} {ins.unidade} (mín: {ins.estoque_seguranca} {ins.unidade})
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div>
+                  <p className="font-semibold text-sm mb-1" style={{ color: "#1A3A6B" }}>
+                    Materiais & EPI:
+                  </p>
+                  {relatorio.material.length === 0 ? (
+                    <p className="text-sm font-medium" style={{ color: "#1B5E20" }}>
+                      Todos em estoque normal ✓
+                    </p>
+                  ) : (
+                    <ul className="text-sm text-gray-700 flex flex-col gap-1">
+                      {relatorio.material.map((ins) => (
+                        <li key={ins.id}>
+                          • {ins.nome}: {ins.estoque_atual} {ins.unidade} (mín: {ins.estoque_seguranca} {ins.unidade})
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </>
+            )}
+
+            <div className="flex gap-3 pt-2 justify-end flex-wrap">
+              <button
+                onClick={closeModal}
+                className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition cursor-pointer"
+              >
+                FECHAR
+              </button>
+              <button
+                onClick={handleRelatorioWhatsapp}
+                disabled={!relatorio}
+                className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
+                style={{ backgroundColor: "#25D366", cursor: "pointer" }}
+              >
+                WHATSAPP
+              </button>
+              <button
+                onClick={handleBaixarRelatorioPdf}
+                disabled={!relatorio || pdfLoading}
+                className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
+                style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
+              >
+                {pdfLoading ? "Gerando..." : "BAIXAR PDF"}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

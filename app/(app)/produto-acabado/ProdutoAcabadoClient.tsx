@@ -408,10 +408,13 @@ export default function ProdutoAcabadoClient({
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg shadow">
+      <div className="overflow-x-auto overflow-y-auto rounded-lg shadow max-h-[calc(100vh-200px)]">
         <table className="w-full text-sm border-collapse">
           <thead>
-            <tr style={{ backgroundColor: "#1565C0" }}>
+            <tr
+              className="sticky top-0 z-10"
+              style={{ backgroundColor: "#1565C0" }}
+            >
               {[
                 "Produto Acabado",
                 "1L",

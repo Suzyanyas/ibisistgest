@@ -115,6 +115,74 @@ export async function getLoteInsumos(lote_id: string): Promise<LoteInsumoItem[]>
   }));
 }
 
+export type EmbalagemConfigItem = {
+  tamanho: string;
+  insumo_id: string | null;
+  insumos: { nome: string; unidade: string } | null;
+};
+
+export async function getEmbalagemConfig(): Promise<EmbalagemConfigItem[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("embalagem_config")
+    .select("tamanho, insumo_id, insumos(nome, unidade)")
+    .order("tamanho");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as EmbalagemConfigItem[];
+}
+
+export type EstoqueEmbalagemItem = {
+  tamanho: string;
+  estoque_atual: number;
+  insumo_nome: string;
+};
+
+export async function getEstoqueEmbalagens(): Promise<EstoqueEmbalagemItem[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("embalagem_config")
+    .select("tamanho, insumo_id, insumos(nome, estoque_atual)")
+    .order("tamanho");
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as unknown as Array<{
+    tamanho: string;
+    insumo_id: string | null;
+    insumos: { nome: string; estoque_atual: number } | null;
+  }>)
+    .filter((row) => row.insumo_id && row.insumos)
+    .map((row) => ({
+      tamanho: row.tamanho,
+      estoque_atual: row.insumos?.estoque_atual ?? 0,
+      insumo_nome: row.insumos?.nome ?? "—",
+    }));
+}
+
+export async function saveEmbalagemConfig(
+  tamanho: string,
+  insumo_id: string
+): Promise<void> {
+  const supabase = await createClient();
+  const { data: existing, error: existingError } = await supabase
+    .from("embalagem_config")
+    .select("id")
+    .eq("tamanho", tamanho)
+    .maybeSingle();
+  if (existingError) throw new Error(existingError.message);
+
+  if (existing) {
+    const { error } = await supabase
+      .from("embalagem_config")
+      .update({ insumo_id })
+      .eq("id", existing.id);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase
+      .from("embalagem_config")
+      .insert({ tamanho, insumo_id });
+    if (error) throw new Error(error.message);
+  }
+}
+
 export async function concluirEnvase(lote_id: string): Promise<void> {
   const supabase = await createClient();
   const { error } = await supabase
@@ -131,19 +199,55 @@ export async function concluirEnvase(lote_id: string): Promise<void> {
   if (envaseError) throw new Error(envaseError.message);
   if (!envase) return;
 
+  const { data: lote, error: loteError } = await supabase
+    .from("lotes_producao")
+    .select("numero_lote, formula_id")
+    .eq("id", lote_id)
+    .single();
+  if (loteError) throw new Error(loteError.message);
+
+  const embalagemConfig = await getEmbalagemConfig();
+  const qtdPorTamanho: Record<string, number> = {
+    "1L": envase.qtd_1l ?? 0,
+    "2L": envase.qtd_2l ?? 0,
+    "5L": envase.qtd_5l ?? 0,
+    "20L": envase.qtd_20l ?? 0,
+  };
+
+  for (const config of embalagemConfig) {
+    const qtd = qtdPorTamanho[config.tamanho] ?? 0;
+    if (qtd <= 0 || !config.insumo_id) continue;
+
+    const { data: insumo, error: insumoError } = await supabase
+      .from("insumos")
+      .select("estoque_atual")
+      .eq("id", config.insumo_id)
+      .single();
+    if (insumoError) throw new Error(insumoError.message);
+
+    const novoEstoque = Math.max(0, (insumo.estoque_atual ?? 0) - qtd);
+    const { error: updateEstoqueError } = await supabase
+      .from("insumos")
+      .update({ estoque_atual: novoEstoque })
+      .eq("id", config.insumo_id);
+    if (updateEstoqueError) throw new Error(updateEstoqueError.message);
+
+    const { error: movError } = await supabase.from("insumo_movimentos").insert({
+      insumo_id: config.insumo_id,
+      tipo: "saida",
+      quantidade: qtd,
+      data: new Date().toISOString().slice(0, 10),
+      obs: `Envase lote ${lote.numero_lote}`,
+    });
+    if (movError) throw new Error(movError.message);
+  }
+
   const total =
     (envase.qtd_1l ?? 0) +
     (envase.qtd_2l ?? 0) +
     (envase.qtd_5l ?? 0) +
     (envase.qtd_20l ?? 0);
   if (total === 0) return;
-
-  const { data: lote, error: loteError } = await supabase
-    .from("lotes_producao")
-    .select("formula_id")
-    .eq("id", lote_id)
-    .single();
-  if (loteError) throw new Error(loteError.message);
 
   const { data: formula, error: formulaError } = await supabase
     .from("formulas")

@@ -3,15 +3,18 @@
 import { createClient } from "@/lib/supabase/server";
 import type { Tables } from "@/types/supabase";
 
-export type InsumoWithFlag = Tables<"insumos"> & { estoque_baixo: boolean; custo_unitario: number | null };
+export type InsumoWithFlag = Tables<"insumos"> & {
+  estoque_baixo: boolean;
+  custo_unitario: number | null;
+  tipo: "producao" | "material";
+};
 export type Movimento = Tables<"insumo_movimentos">;
 
-export async function getInsumos(): Promise<InsumoWithFlag[]> {
+export async function getInsumos(tipo?: "producao" | "material"): Promise<InsumoWithFlag[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("insumos")
-    .select("*")
-    .order("nome");
+  let query = supabase.from("insumos").select("*").order("nome");
+  if (tipo) query = query.eq("tipo", tipo);
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return (data ?? []).map((row) => ({
     ...row,
@@ -24,9 +27,13 @@ export async function createInsumo(payload: {
   unidade: string;
   estoque_atual: number;
   estoque_seguranca: number;
+  custo_unitario?: number;
+  custo_unidade?: string;
+  tipo?: "producao" | "material";
 }): Promise<void> {
   const supabase = await createClient();
-  const { error } = await supabase.from("insumos").insert(payload);
+  const { tipo = "producao", ...rest } = payload;
+  const { error } = await supabase.from("insumos").insert({ ...rest, tipo });
   if (error) throw new Error(error.message);
 }
 
@@ -85,16 +92,74 @@ export async function atualizarEstoque(
   if (moveError) throw new Error(moveError.message);
 }
 
-export async function updateCustoUnitario(
+export async function updateCustoInsumo(
   id: string,
-  custo_unitario: number
+  custo_unitario: number,
+  custo_unidade: string
 ): Promise<void> {
   const supabase = await createClient();
   const { error } = await supabase
     .from("insumos")
-    .update({ custo_unitario })
+    .update({ custo_unitario, custo_unidade })
     .eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+export async function updateInsumo(
+  id: string,
+  nome: string,
+  unidade: string,
+  estoque_seguranca: number,
+  custo_unitario?: number,
+  custo_unidade?: string
+): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("insumos")
+    .update({ nome, unidade, estoque_seguranca, custo_unitario, custo_unidade })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteInsumo(id: string): Promise<void> {
+  const supabase = await createClient();
+
+  const { count: loteCount, error: loteError } = await supabase
+    .from("lote_insumos")
+    .select("id", { count: "exact", head: true })
+    .eq("insumo_id", id);
+  if (loteError) throw new Error(loteError.message);
+
+  const { count: formulaCount, error: formulaError } = await supabase
+    .from("formula_insumos")
+    .select("id", { count: "exact", head: true })
+    .eq("insumo_id", id);
+  if (formulaError) throw new Error(formulaError.message);
+
+  if ((loteCount ?? 0) > 0 || (formulaCount ?? 0) > 0) {
+    throw new Error(
+      "Este insumo está a ser usado em fórmulas ou lotes e não pode ser excluído."
+    );
+  }
+
+  const { error } = await supabase.from("insumos").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function getInsumosAbaixoMinimo(): Promise<{
+  producao: InsumoWithFlag[];
+  material: InsumoWithFlag[];
+}> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("insumos").select("*").order("nome");
+  if (error) throw new Error(error.message);
+  const abaixoMinimo = (data ?? [])
+    .filter((row) => row.estoque_atual < row.estoque_seguranca)
+    .map((row) => ({ ...row, estoque_baixo: true }));
+  return {
+    producao: abaixoMinimo.filter((row) => row.tipo === "producao"),
+    material: abaixoMinimo.filter((row) => row.tipo === "material"),
+  };
 }
 
 export async function getMovimentos(insumo_id: string): Promise<Movimento[]> {
