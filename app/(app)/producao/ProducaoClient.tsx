@@ -315,6 +315,7 @@ export default function ProducaoClient({
 
   useEffect(() => {
     const formulaIdParam = searchParams.get("formula_id");
+    const formulaNomeParam = searchParams.get("formula_nome");
     setFormulasLoading(true);
     getFormulasList()
       .then((list) => {
@@ -322,6 +323,8 @@ export default function ProducaoClient({
         if (list.length > 0) {
           const target = formulaIdParam
             ? (list.find((f) => f.id === formulaIdParam) ?? list[0])
+            : formulaNomeParam
+            ? (list.find((f) => f.nome === formulaNomeParam) ?? list[0])
             : list[0];
           handleFormulaChange(target.id, target, list);
         }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Calendar, Package, CheckCircle } from "lucide-react";
 import {
@@ -13,6 +13,7 @@ import {
   toggleAgendaItem,
   addAgendaItem,
   deleteAgendaItem,
+  reagendarAgendaItem,
   type AgendaItemWithFormula,
   type LoteEnvaseItem,
   type InsumoAbaixo,
@@ -242,6 +243,10 @@ export default function DashboardClient({
   // Per-item toggle loading set
   const [toggling, setToggling] = useState<Set<string>>(new Set());
 
+  // Reagendar atrasado item
+  const [isReagendando, startReagendar] = useTransition();
+  const [reagendandoId, setReagendandoId] = useState<string | null>(null);
+
   // Atividade recente: show 5 by default, expand on "Ver mais"
   const [showAllAtividade, setShowAllAtividade] = useState(false);
 
@@ -314,6 +319,18 @@ export default function DashboardClient({
     }
   }
 
+  function handleReagendar(id: string) {
+    setReagendandoId(id);
+    startReagendar(async () => {
+      try {
+        await reagendarAgendaItem(id);
+        await refresh();
+      } finally {
+        setReagendandoId(null);
+      }
+    });
+  }
+
   function openModal() {
     setSelFormulaId(formulas.length > 0 ? formulas[0].id : "");
     setSelData(todayStr());
@@ -339,12 +356,10 @@ export default function DashboardClient({
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
-  const allAgenda = [
-    ...agendaAtrasada.filter(
-      (a) => !agendaHoje.some((h) => h.id === a.id)
-    ),
-    ...agendaHoje,
-  ];
+  const atrasados = agendaAtrasada.filter(
+    (a) => !agendaHoje.some((h) => h.id === a.id)
+  );
+  const hoje = agendaHoje;
 
   const agendaGradient = "linear-gradient(135deg, #1A3A6B 0%, #1565C0 100%)";
   const envaseGradient = "linear-gradient(135deg, #1565C0 0%, #0288D1 100%)";
@@ -398,7 +413,7 @@ export default function DashboardClient({
           </div>
 
           <ul className="flex-1 px-4 pb-4 flex flex-col overflow-y-auto max-h-96">
-            {allAgenda.length === 0 && (
+            {atrasados.length === 0 && hoje.length === 0 && (
               <li
                 className="py-2"
                 style={{ color: "rgba(255,255,255,0.6)", fontSize: 14 }}
@@ -406,83 +421,200 @@ export default function DashboardClient({
                 Nenhum item na agenda.
               </li>
             )}
-            {allAgenda.map((item, idx) => {
-              const isAtrasado =
-                !item.concluido && item.data_agenda < today;
-              const isLoading = toggling.has(item.id);
-              const textColor = item.concluido
-                ? "rgba(255,255,255,0.4)"
-                : isAtrasado
-                ? "#FFCDD2"
-                : "#ffffff";
-              const isLast =
-                idx === allAgenda.length - 1 && produtosAbaixo.length === 0;
-              return (
-                <li
-                  key={item.id}
-                  className="flex items-center gap-2 group"
-                  style={{
-                    padding: "8px 0",
-                    borderBottom: isLast
-                      ? "none"
-                      : "1px solid rgba(255,255,255,0.08)",
-                  }}
-                >
-                  <button
-                    onClick={() => handleToggle(item)}
-                    disabled={isLoading}
-                    className="flex-shrink-0 flex items-center justify-center transition disabled:opacity-50"
+
+            {atrasados.length > 0 && (
+              <>
+                <li className="pt-1 pb-1">
+                  <span
                     style={{
-                      width: '20px',
-                      height: '20px',
-                      minWidth: '20px',
-                      minHeight: '20px',
-                      borderRadius: 4,
-                      border: "2px solid rgba(255,255,255,0.6)",
-                      backgroundColor: item.concluido ? "rgba(255,255,255,0.3)" : "transparent",
-                      cursor: "pointer",
-                    }}
-                    title="Marcar como concluído"
-                  >
-                    {item.concluido && (
-                      <span style={{ color: "white", fontSize: 10, lineHeight: 1 }}>✓</span>
-                    )}
-                  </button>
-                  <button
-                    onClick={() =>
-                      router.push(
-                        `/producao?formula_id=${item.formula_id}&formula_nome=${encodeURIComponent(item.formulas?.nome ?? "")}`
-                      )
-                    }
-                    disabled={isLoading}
-                    className="flex-1 text-left py-1 transition disabled:opacity-50 hover:underline"
-                    style={{
-                      fontSize: 15,
-                      color: textColor,
-                      textDecoration: item.concluido ? "line-through" : "none",
+                      color: "#FB8C00",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      marginBottom: 4,
+                      display: "block",
                     }}
                   >
-                    {item.formulas?.nome ?? "—"}
-                    {isAtrasado && (
-                      <span
-                        className="ml-1 text-xs"
-                        style={{ color: "#EF9A9A" }}
-                      >
-                        ({item.data_agenda})
-                      </span>
-                    )}
-                  </button>
-                  <button
-                    onClick={() => handleDelete(item.id)}
-                    disabled={isLoading}
-                    className="opacity-0 group-hover:opacity-100 text-white/50 hover:text-white/90 text-base leading-none transition disabled:opacity-30 transition-all duration-150 active:scale-95"
-                    title="Remover"
-                  >
-                    &times;
-                  </button>
+                    Em Atraso
+                  </span>
                 </li>
-              );
-            })}
+                {atrasados.map((item) => {
+                  const isLoading = toggling.has(item.id);
+                  const isReagendandoThis =
+                    isReagendando && reagendandoId === item.id;
+                  return (
+                    <li
+                      key={item.id}
+                      className="flex items-center gap-2 group"
+                      style={{
+                        borderLeft: "3px solid #FB8C00",
+                        background: "rgba(251,140,0,0.12)",
+                        borderRadius: 6,
+                        padding: "4px 8px",
+                        marginBottom: 4,
+                      }}
+                    >
+                      <button
+                        onClick={() => handleToggle(item)}
+                        disabled={isLoading}
+                        className="flex-shrink-0 flex items-center justify-center transition disabled:opacity-50"
+                        style={{
+                          width: "20px",
+                          height: "20px",
+                          minWidth: "20px",
+                          minHeight: "20px",
+                          borderRadius: 4,
+                          border: "2px solid rgba(255,255,255,0.6)",
+                          backgroundColor: item.concluido
+                            ? "rgba(255,255,255,0.3)"
+                            : "transparent",
+                          cursor: "pointer",
+                        }}
+                        title="Marcar como concluído"
+                      >
+                        {item.concluido && (
+                          <span style={{ color: "white", fontSize: 10, lineHeight: 1 }}>✓</span>
+                        )}
+                      </button>
+                      <button
+                        onClick={() =>
+                          router.push(
+                            `/producao?formula_id=${item.formula_id}&formula_nome=${encodeURIComponent(item.formulas?.nome ?? "")}`
+                          )
+                        }
+                        disabled={isLoading}
+                        className="flex-1 text-left py-1 transition disabled:opacity-50 hover:underline"
+                      >
+                        <span
+                          className="block"
+                          style={{
+                            fontSize: 15,
+                            color: item.concluido ? "rgba(255,255,255,0.4)" : "#FFE0B2",
+                            textDecoration: item.concluido ? "line-through" : "none",
+                          }}
+                        >
+                          {item.formulas?.nome ?? "—"}
+                        </span>
+                        <span
+                          className="block"
+                          style={{ color: "#FFCC80", fontSize: 11 }}
+                        >
+                          {item.data_agenda}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => handleReagendar(item.id)}
+                        disabled={isLoading || isReagendandoThis}
+                        className="flex-shrink-0 transition disabled:opacity-50"
+                        style={{
+                          fontSize: 10,
+                          color: "#FB8C00",
+                          border: "1px solid #FB8C00",
+                          borderRadius: 4,
+                          padding: "2px 6px",
+                          background: "transparent",
+                          cursor: "pointer",
+                        }}
+                        title="Reagendar para hoje"
+                      >
+                        {isReagendandoThis ? "..." : "Reagendar"}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(item.id)}
+                        disabled={isLoading}
+                        className="opacity-0 group-hover:opacity-100 text-white/50 hover:text-white/90 text-base leading-none transition disabled:opacity-30 transition-all duration-150 active:scale-95"
+                        title="Remover"
+                      >
+                        &times;
+                      </button>
+                    </li>
+                  );
+                })}
+              </>
+            )}
+
+            {hoje.length > 0 && (
+              <>
+                <li className="pt-3 pb-1">
+                  <span
+                    style={{
+                      color: "rgba(255,255,255,0.6)",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Hoje
+                  </span>
+                </li>
+                {hoje.map((item, idx) => {
+                  const isLoading = toggling.has(item.id);
+                  const isLast =
+                    idx === hoje.length - 1 && produtosAbaixo.length === 0;
+                  return (
+                    <li
+                      key={item.id}
+                      className="flex items-center gap-2 group"
+                      style={{
+                        padding: "8px 0",
+                        borderBottom: isLast
+                          ? "none"
+                          : "1px solid rgba(255,255,255,0.08)",
+                      }}
+                    >
+                      <button
+                        onClick={() => handleToggle(item)}
+                        disabled={isLoading}
+                        className="flex-shrink-0 flex items-center justify-center transition disabled:opacity-50"
+                        style={{
+                          width: "20px",
+                          height: "20px",
+                          minWidth: "20px",
+                          minHeight: "20px",
+                          borderRadius: 4,
+                          border: "2px solid rgba(255,255,255,0.6)",
+                          backgroundColor: item.concluido
+                            ? "rgba(255,255,255,0.3)"
+                            : "transparent",
+                          cursor: "pointer",
+                        }}
+                        title="Marcar como concluído"
+                      >
+                        {item.concluido && (
+                          <span style={{ color: "white", fontSize: 10, lineHeight: 1 }}>✓</span>
+                        )}
+                      </button>
+                      <button
+                        onClick={() =>
+                          router.push(
+                            `/producao?formula_id=${item.formula_id}&formula_nome=${encodeURIComponent(item.formulas?.nome ?? "")}`
+                          )
+                        }
+                        disabled={isLoading}
+                        className="flex-1 text-left py-1 transition disabled:opacity-50 hover:underline"
+                        style={{
+                          fontSize: 15,
+                          color: item.concluido ? "rgba(255,255,255,0.4)" : "#ffffff",
+                          textDecoration: item.concluido ? "line-through" : "none",
+                        }}
+                      >
+                        {item.formulas?.nome ?? "—"}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(item.id)}
+                        disabled={isLoading}
+                        className="opacity-0 group-hover:opacity-100 text-white/50 hover:text-white/90 text-base leading-none transition disabled:opacity-30 transition-all duration-150 active:scale-95"
+                        title="Remover"
+                      >
+                        &times;
+                      </button>
+                    </li>
+                  );
+                })}
+              </>
+            )}
 
             {produtosAbaixo.length > 0 && (
               <>
@@ -504,34 +636,26 @@ export default function DashboardClient({
                     key={`low-${p.id}`}
                     className="flex items-center gap-2 py-1.5 border-b border-white/10 last:border-0"
                   >
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        width: '20px',
-                        height: '20px',
-                        minWidth: '20px',
-                        minHeight: '20px',
-                        backgroundColor: '#FFEE58',
-                        borderRadius: 4,
-                        flexShrink: 0,
-                        display: 'inline-block',
-                      }}
-                    />
                     <button
-                      onClick={() => router.push("/producao")}
-                      className="flex-1 text-left hover:underline transition"
+                      onClick={() =>
+                        router.push(
+                          `/producao?formula_nome=${encodeURIComponent(p.nome)}`
+                        )
+                      }
+                      className="flex-1 text-left transition hover:opacity-80"
                       style={{
                         background: "none",
                         border: "none",
                         padding: 0,
                         cursor: "pointer",
+                        textDecoration: "none",
                       }}
                     >
                       <span
                         className="block"
                         style={{ fontSize: 14, color: "#FFFFFF" }}
                       >
-                        {p.nome}
+                        ⚠️ {p.nome}
                       </span>
                       <span
                         className="block"
@@ -635,16 +759,21 @@ export default function DashboardClient({
               produtosAbaixo.map((p) => (
                 <li
                   key={p.id}
-                  className="flex items-center justify-between text-white border-b border-white/10 last:border-0"
-                  style={{ fontSize: 15, padding: "8px 0" }}
+                  className="border-b border-white/10 last:border-0"
                 >
-                  <span className="truncate">{p.nome}</span>
-                  <span
-                    className="ml-2 flex-shrink-0 font-semibold"
-                    style={{ color: "#FFCDD2" }}
+                  <button
+                    onClick={() => router.push("/produto-acabado")}
+                    className="w-full flex items-center justify-between text-white transition-opacity hover:opacity-80"
+                    style={{ fontSize: 15, padding: "8px 0", background: "none", border: "none", cursor: "pointer" }}
                   >
-                    {p.estoque_atual} UND
-                  </span>
+                    <span className="truncate">{p.nome}</span>
+                    <span
+                      className="ml-2 flex-shrink-0 font-semibold"
+                      style={{ color: "#FFCDD2" }}
+                    >
+                      {p.estoque_atual} UND
+                    </span>
+                  </button>
                 </li>
               ))
             )}
@@ -685,16 +814,21 @@ export default function DashboardClient({
               (showAllEstoque ? insumosAbaixo : insumosAbaixo.slice(0, 5)).map((ins) => (
                 <li
                   key={ins.id}
-                  className="flex items-center justify-between border-b border-gray-200 last:border-0"
-                  style={{ fontSize: 15, padding: "8px 0" }}
+                  className="border-b border-gray-200 last:border-0"
                 >
-                  <span className="text-gray-800 truncate">{ins.nome}</span>
-                  <span
-                    className="ml-2 flex-shrink-0 font-semibold"
-                    style={{ color: "#C62828" }}
+                  <button
+                    onClick={() => router.push("/estoque-insumos")}
+                    className="w-full flex items-center justify-between transition-opacity hover:opacity-80"
+                    style={{ fontSize: 15, padding: "8px 0", background: "none", border: "none", cursor: "pointer" }}
                   >
-                    {ins.estoque_atual} {ins.unidade}
-                  </span>
+                    <span className="text-gray-800 truncate">{ins.nome}</span>
+                    <span
+                      className="ml-2 flex-shrink-0 font-semibold"
+                      style={{ color: "#C62828" }}
+                    >
+                      {ins.estoque_atual} {ins.unidade}
+                    </span>
+                  </button>
                 </li>
               ))
             )}
@@ -778,7 +912,7 @@ export default function DashboardClient({
                     </span>
                     {item.user_email && (
                       <span className="ml-1.5" style={{ fontSize: 11, color: "#00ACC1" }}>
-                        · {item.user_email}
+                        · {item.user_email?.split("@")[0] ?? ""}
                       </span>
                     )}
                   </div>

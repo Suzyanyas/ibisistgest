@@ -91,6 +91,21 @@ export async function deleteAgendaItem(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+export async function reagendarAgendaItem(
+  id: string
+): Promise<Tables<"agenda_producao">> {
+  const supabase = await createClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from("agenda_producao")
+    .update({ data_agenda: today })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function getLotesEmEnvase(): Promise<LoteEnvaseItem[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
