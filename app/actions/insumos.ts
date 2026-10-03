@@ -1,6 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/app/actions/auth-role";
+import { logAtividade } from "@/app/actions/dashboard";
 import type { Tables } from "@/types/supabase";
 
 export type InsumoWithFlag = Tables<"insumos"> & {
@@ -18,7 +20,7 @@ export async function getInsumos(tipo?: "producao" | "material"): Promise<Insumo
   if (error) throw new Error(error.message);
   return (data ?? []).map((row) => ({
     ...row,
-    estoque_baixo: row.estoque_atual < row.estoque_seguranca,
+    estoque_baixo: row.estoque_atual <= row.estoque_seguranca,
   }));
 }
 
@@ -32,9 +34,11 @@ export async function createInsumo(payload: {
   tipo?: "producao" | "material";
 }): Promise<void> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
   const { tipo = "producao", ...rest } = payload;
   const { error } = await supabase.from("insumos").insert({ ...rest, tipo });
   if (error) throw new Error(error.message);
+  await logAtividade("Novo insumo", payload.nome, user?.id, user?.email);
 }
 
 export async function novaEntrada(
@@ -44,6 +48,7 @@ export async function novaEntrada(
   obs?: string
 ): Promise<void> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
 
   const { data: insumo, error: fetchError } = await supabase
     .from("insumos")
@@ -60,10 +65,28 @@ export async function novaEntrada(
     .eq("id", insumo_id);
   if (updateError) throw new Error(updateError.message);
 
-  const { error: moveError } = await supabase
-    .from("insumo_movimentos")
-    .insert({ insumo_id, quantidade, data, obs: obs ?? null, tipo: "entrada" });
+  const { error: moveError } = await supabase.from("insumo_movimentos").insert({
+    insumo_id,
+    quantidade,
+    data,
+    obs: obs ?? null,
+    tipo: "entrada",
+    user_id: user?.id ?? null,
+    user_email: user?.email ?? null,
+  });
   if (moveError) throw new Error(moveError.message);
+
+  const { data: insumoInfo } = await supabase
+    .from("insumos")
+    .select("nome, unidade")
+    .eq("id", insumo_id)
+    .single();
+  await logAtividade(
+    "Entrada de insumo",
+    `${insumoInfo?.nome ?? "—"} — ${quantidade} ${insumoInfo?.unidade ?? ""}`.trim(),
+    user?.id,
+    user?.email
+  );
 }
 
 export async function atualizarEstoque(
@@ -73,6 +96,7 @@ export async function atualizarEstoque(
   obs?: string
 ): Promise<void> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
 
   const { error: updateError } = await supabase
     .from("insumos")
@@ -80,16 +104,28 @@ export async function atualizarEstoque(
     .eq("id", insumo_id);
   if (updateError) throw new Error(updateError.message);
 
-  const { error: moveError } = await supabase
-    .from("insumo_movimentos")
-    .insert({
-      insumo_id,
-      quantidade: quantidade_nova,
-      data,
-      obs: obs ?? null,
-      tipo: "ajuste",
-    });
+  const { error: moveError } = await supabase.from("insumo_movimentos").insert({
+    insumo_id,
+    quantidade: quantidade_nova,
+    data,
+    obs: obs ?? null,
+    tipo: "ajuste",
+    user_id: user?.id ?? null,
+    user_email: user?.email ?? null,
+  });
   if (moveError) throw new Error(moveError.message);
+
+  const { data: insumoInfo } = await supabase
+    .from("insumos")
+    .select("nome, unidade")
+    .eq("id", insumo_id)
+    .single();
+  await logAtividade(
+    "Ajuste de insumo",
+    `${insumoInfo?.nome ?? "—"} — ${quantidade_nova} ${insumoInfo?.unidade ?? ""}`.trim(),
+    user?.id,
+    user?.email
+  );
 }
 
 export async function updateCustoInsumo(
@@ -114,15 +150,18 @@ export async function updateInsumo(
   custo_unidade?: string
 ): Promise<void> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
   const { error } = await supabase
     .from("insumos")
     .update({ nome, unidade, estoque_seguranca, custo_unitario, custo_unidade })
     .eq("id", id);
   if (error) throw new Error(error.message);
+  await logAtividade("Edição de insumo", nome, user?.id, user?.email);
 }
 
 export async function deleteInsumo(id: string): Promise<void> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
 
   const { count: loteCount, error: loteError } = await supabase
     .from("lote_insumos")
@@ -142,6 +181,18 @@ export async function deleteInsumo(id: string): Promise<void> {
     );
   }
 
+  const { data: insumoInfo } = await supabase
+    .from("insumos")
+    .select("nome, unidade")
+    .eq("id", id)
+    .single();
+  await logAtividade(
+    "Exclusão de insumo",
+    `${insumoInfo?.nome ?? "—"} (${insumoInfo?.unidade ?? ""})`,
+    user?.id,
+    user?.email
+  );
+
   const { error } = await supabase.from("insumos").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
@@ -154,7 +205,7 @@ export async function getInsumosAbaixoMinimo(): Promise<{
   const { data, error } = await supabase.from("insumos").select("*").order("nome");
   if (error) throw new Error(error.message);
   const abaixoMinimo = (data ?? [])
-    .filter((row) => row.estoque_atual < row.estoque_seguranca)
+    .filter((row) => row.estoque_atual <= row.estoque_seguranca)
     .map((row) => ({ ...row, estoque_baixo: true }));
   return {
     producao: abaixoMinimo.filter((row) => row.tipo === "producao"),

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition } from "react";
-import { Trash2, Pencil } from "lucide-react";
+import { Trash2, Pencil, AlertTriangle } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getLotesProducao,
@@ -46,10 +46,12 @@ function Modal({
   title,
   onClose,
   children,
+  danger,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  danger?: boolean;
 }) {
   return (
     <div
@@ -62,12 +64,15 @@ function Modal({
       >
         <div
           className="flex items-center justify-between px-6 py-4 sticky top-0"
-          style={{ backgroundColor: "#1565C0", borderRadius: "12px 12px 0 0" }}
+          style={{ backgroundColor: danger ? "#C62828" : "#1565C0", borderRadius: "12px 12px 0 0" }}
         >
-          <h2 className="text-white font-semibold text-lg">{title}</h2>
+          <h2 className="text-white font-semibold text-lg flex items-center">
+            {danger && <AlertTriangle size={20} color="white" style={{ marginRight: 8 }} />}
+            {title}
+          </h2>
           <button
             onClick={onClose}
-            className="text-white opacity-70 hover:opacity-100 text-2xl leading-none"
+            className="modal-close text-white text-2xl leading-none"
           >
             &times;
           </button>
@@ -130,7 +135,10 @@ function ModalActions({
         onClick={onSave}
         disabled={disabled}
         className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
-        style={{ backgroundColor: saveColor ?? "#1565C0" }}
+        style={{
+          backgroundColor: saveColor ?? "#1565C0",
+          boxShadow: saveColor === "#C62828" ? "0 4px 16px rgba(198,40,40,0.4)" : undefined,
+        }}
       >
         {saveLabel}
       </button>
@@ -142,15 +150,18 @@ function PinField({
   pin,
   setPin,
   pinError,
+  danger,
 }: {
   pin: string;
   setPin: (v: string) => void;
   pinError: string | null;
+  danger?: boolean;
 }) {
   return (
     <Field label="PIN de confirmação">
       <input
         className={inputCls}
+        style={danger ? { border: "2px solid #E53935" } : undefined}
         type="password"
         maxLength={4}
         value={pin}
@@ -164,15 +175,15 @@ function PinField({
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; bg: string; color: string }> = {
-    producao: { label: "produção", bg: "#E0E0E0", color: "#424242" },
-    envase: { label: "envase", bg: "#E3F2FD", color: "#1565C0" },
+    producao: { label: "produção", bg: "#E8F4FF", color: "#1565C0" },
+    envase: { label: "envase", bg: "#E3F2FD", color: "#0288D1" },
     concluido: { label: "concluído", bg: "#E8F5E9", color: "#2E7D32" },
   };
   const c = map[status] ?? { label: status, bg: "#E0E0E0", color: "#424242" };
   return (
     <span
-      className="px-2 py-0.5 rounded text-xs font-semibold"
-      style={{ backgroundColor: c.bg, color: c.color }}
+      className="font-semibold"
+      style={{ backgroundColor: c.bg, color: c.color, borderRadius: 99, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}
     >
       {c.label}
     </span>
@@ -562,16 +573,17 @@ export default function ProducaoClient({
     <div className="flex overflow-hidden" style={{ minHeight: "calc(100vh - 64px)" }}>
       {/* ── Sidebar ── */}
       <aside
-        className={`flex-shrink-0 flex-col border-r border-gray-200 bg-white md:flex relative z-10 ${mobileSidebarOpen ? "flex" : "hidden"}`}
-        style={{ width: 220 }}
+        className={`flex-shrink-0 flex-col border-r-2 md:flex relative z-10 ${mobileSidebarOpen ? "flex" : "hidden"}`}
+        style={{ width: 220, background: "linear-gradient(180deg, #F8FAFF 0%, #EEF4FF 100%)", borderRightColor: "#E0EAFF" }}
       >
         <div
-          className="flex items-center justify-between px-4 py-4 border-b border-blue-200"
-          style={{ backgroundColor: "#1565C0" }}
+          className="flex items-center justify-between px-4 py-4"
+          style={{ borderBottom: "1px solid #E0EAFF" }}
         >
-          <span className="text-white" style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 16, fontWeight: 600 }}>Produção</span>
+          <span style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 18, fontWeight: 700, color: "#1A3A6B" }}>Produção</span>
           <button
             onClick={handleNovaProdução}
+            className="btn-icon"
             style={{
               width: "32px",
               height: "32px",
@@ -579,8 +591,8 @@ export default function ProducaoClient({
               minHeight: "32px",
               borderRadius: "50%",
               border: "none",
-              background: "white",
-              color: "#1565C0",
+              background: "#1565C0",
+              color: "white",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -588,7 +600,7 @@ export default function ProducaoClient({
               fontWeight: "700",
               cursor: "pointer",
               flexShrink: 0,
-              boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+              boxShadow: "0 2px 6px rgba(21,101,192,0.3)",
             }}
             title="Novo Lote"
           >
@@ -607,13 +619,16 @@ export default function ProducaoClient({
               <li key={l.id}>
                 <button
                   onClick={() => selectLote(l.id)}
-                  className="text-left text-sm transition"
+                  className="sidebar-item sidebar-nav-premium text-left text-sm transition"
                   style={{
-                    backgroundColor: isActive ? "#1565C0" : "transparent",
-                    color: isActive ? "#ffffff" : "#1A3A6B",
+                    background: isActive
+                      ? "linear-gradient(90deg, rgba(21,101,192,0.12) 0%, rgba(21,101,192,0.04) 100%)"
+                      : "transparent",
+                    borderLeft: isActive ? "3px solid #1565C0" : "3px solid transparent",
+                    color: isActive ? "#1565C0" : "#1A3A6B",
                     borderRadius: 8,
                     padding: "12px 16px",
-                    fontWeight: isActive ? 600 : 400,
+                    fontWeight: isActive ? 700 : 400,
                     margin: "0 4px",
                     width: "calc(100% - 8px)",
                     display: "block",
@@ -625,35 +640,14 @@ export default function ProducaoClient({
                   </div>
                   <div
                     className="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap"
-                    style={{ color: isActive ? "#BBDEFB" : "#607D8B" }}
+                    style={{ color: isActive ? "#1565C0" : "#607D8B" }}
                   >
                     <span>{l.numero_lote}</span>
                     <span>·</span>
                     <span>{l.data_producao}</span>
                   </div>
                   <div className="mt-1">
-                    {isActive ? (
-                      <span
-                        className="text-xs font-semibold px-1.5 py-0.5 rounded"
-                        style={{
-                          backgroundColor:
-                            l.status === "producao"
-                              ? "rgba(255,255,255,0.25)"
-                              : l.status === "envase"
-                              ? "rgba(187,222,251,0.5)"
-                              : "rgba(200,230,201,0.5)",
-                          color: "#fff",
-                        }}
-                      >
-                        {l.status === "producao"
-                          ? "produção"
-                          : l.status === "envase"
-                          ? "envase"
-                          : "concluído"}
-                      </span>
-                    ) : (
-                      <StatusBadge status={l.status} />
-                    )}
+                    <StatusBadge status={l.status} />
                   </div>
                 </button>
               </li>
@@ -663,10 +657,10 @@ export default function ProducaoClient({
       </aside>
 
       {/* ── Main panel ── */}
-      <main className={`flex-1 min-w-0 overflow-y-auto bg-white md:block ${!mobileSidebarOpen ? "block" : "hidden"}`} style={{ padding: 24 }}>
+      <main className={`flex-1 min-w-0 overflow-y-auto md:block ${!mobileSidebarOpen ? "block" : "hidden"}`} style={{ padding: 24, background: "linear-gradient(180deg, #F8FAFF 0%, #FFFFFF 80px)" }}>
         <button
           onClick={() => setMobileSidebarOpen(true)}
-          className="mb-4 flex items-center gap-1 text-sm font-semibold md:hidden"
+          className="mb-4 flex items-center gap-1 text-sm font-semibold md:hidden hover:bg-gray-100 transition-all active:scale-95"
           style={{ color: "#1565C0", cursor: "pointer" }}
         >
           ← Produção
@@ -863,12 +857,19 @@ export default function ProducaoClient({
         {detail && !detailLoading && (
           <div className="max-w-3xl">
             {/* Panel header */}
-            <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
+            <div
+              className="flex items-start justify-between mb-4 gap-4 flex-wrap"
+              style={{ paddingBottom: 16, borderBottom: "1px solid #E8F4FF" }}
+            >
               <div>
                 <div className="flex items-center gap-3 flex-wrap">
                   <h2
-                    className="text-2xl font-bold"
-                    style={{ color: "#1A3A6B" }}
+                    style={{
+                      fontSize: 24,
+                      fontWeight: 700,
+                      color: "#1A3A6B",
+                      fontFamily: "var(--font-lora), Georgia, serif",
+                    }}
                   >
                     {detail.formulas?.nome ?? "—"}
                   </h2>
@@ -883,8 +884,8 @@ export default function ProducaoClient({
                   ) : (
                     <>
                       <span
-                        className="px-2 py-0.5 rounded text-xs font-bold tracking-wider"
-                        style={{ backgroundColor: "#E3F2FD", color: "#1565C0" }}
+                        className="font-bold tracking-wider"
+                        style={{ backgroundColor: "#E8F4FF", color: "#1565C0", borderRadius: 8, padding: "3px 10px", fontSize: 13, fontWeight: 700 }}
                       >
                         {detail.numero_lote}
                       </span>
@@ -950,7 +951,7 @@ export default function ProducaoClient({
                     </div>
                   </div>
                 ) : (
-                  <div className="text-sm text-gray-500 mt-1">
+                  <div className="mt-1" style={{ fontSize: 13, color: "#6B7A99" }}>
                     <p>
                       Data de produção:{" "}
                       <strong>{detail.data_producao}</strong>
@@ -988,8 +989,14 @@ export default function ProducaoClient({
             {/* Status info banners */}
             {detail.status === "envase" && (
               <div
-                className="flex items-center gap-3 rounded-lg px-4 py-3 mb-5 text-sm"
-                style={{ backgroundColor: "#E3F2FD", color: "#1565C0", border: "1px solid #BBDEFB" }}
+                className="flex items-center gap-3 text-sm mb-5"
+                style={{
+                  background: "linear-gradient(135deg, #E3F2FD, #E8F4FF)",
+                  color: "#1565C0",
+                  border: "1px solid #90CAF9",
+                  borderRadius: 10,
+                  padding: "12px 16px",
+                }}
               >
                 <span style={{ fontSize: 18 }}>ℹ️</span>
                 <span>Este lote está em envase. Aceda ao módulo Envase para concluir.</span>
@@ -997,8 +1004,14 @@ export default function ProducaoClient({
             )}
             {detail.status === "concluido" && (
               <div
-                className="flex items-center gap-3 rounded-lg px-4 py-3 mb-5 text-sm"
-                style={{ backgroundColor: "#E8F5E9", color: "#2E7D32", border: "1px solid #C8E6C9" }}
+                className="flex items-center gap-3 text-sm mb-5"
+                style={{
+                  background: "linear-gradient(135deg, #E8F5E9, #F1F8E9)",
+                  color: "#2E7D32",
+                  border: "1px solid #A5D6A7",
+                  borderRadius: 10,
+                  padding: "12px 16px",
+                }}
               >
                 <span style={{ fontSize: 18 }}>✓</span>
                 <span>Lote concluído.</span>
@@ -1007,8 +1020,8 @@ export default function ProducaoClient({
 
             {/* Insumos table */}
             <h3
-              className="font-semibold text-base mb-3"
-              style={{ color: "#1A3A6B" }}
+              className="font-bold"
+              style={{ fontSize: 16, color: "#1A3A6B", marginBottom: 12, borderLeft: "3px solid #00BCD4", paddingLeft: 8 }}
             >
               Insumos Utilizados
             </h3>
@@ -1016,7 +1029,7 @@ export default function ProducaoClient({
             <div className="overflow-x-auto rounded-lg shadow mb-4">
               <table className="w-full text-sm border-collapse">
                 <thead>
-                  <tr style={{ backgroundColor: "#1565C0" }}>
+                  <tr style={{ background: "linear-gradient(135deg, #1A3A6B 0%, #1565C0 100%)" }}>
                     {(detail.status === "producao"
                       ? ["Insumo", "Quantidade", "Unidade", "Ações"]
                       : ["Insumo", "Quantidade", "Unidade"]
@@ -1068,6 +1081,7 @@ export default function ProducaoClient({
                             <button
                               onClick={() => openExcluirInsumo(li)}
                               title="Remover insumo"
+                              className="btn-icon"
                               style={{
                                 width: '32px',
                                 height: '32px',
@@ -1226,14 +1240,14 @@ export default function ProducaoClient({
 
       {/* ── Modal: Excluir Insumo do Lote ── */}
       {modal === "excluirInsumo" && targetInsumo && (
-        <Modal title="Remover Insumo do Lote" onClose={closeModal}>
+        <Modal title="Remover Insumo do Lote" onClose={closeModal} danger>
           <div className="flex flex-col gap-4">
-            <p className="text-sm text-gray-700">
+            <p style={{ fontSize: 15, color: "#1A1A1A", fontWeight: 500 }}>
               Tem certeza que deseja remover{" "}
               <strong>{targetInsumo.insumos?.nome ?? "este insumo"}</strong> do
               lote?
             </p>
-            <PinField pin={pin} setPin={setPin} pinError={pinError} />
+            <PinField pin={pin} setPin={setPin} pinError={pinError} danger />
             <ErrorMsg msg={modalError} />
             <ModalActions
               onCancel={closeModal}
@@ -1248,19 +1262,16 @@ export default function ProducaoClient({
 
       {/* ── Modal: Excluir Lote ── */}
       {modal === "excluirLote" && detail && (
-        <Modal title="Excluir Lote" onClose={closeModal}>
+        <Modal title="Confirmar Exclusão" onClose={closeModal} danger>
           <div className="flex flex-col gap-4">
             <div className="flex items-start gap-3">
-              <span className="text-3xl flex-shrink-0 mt-0.5" aria-hidden="true">
-                ⚠️
-              </span>
-              <p className="text-sm text-gray-700">
+              <p style={{ fontSize: 15, color: "#1A1A1A", fontWeight: 500 }}>
                 Tem certeza que deseja excluir o lote{" "}
                 <strong>{detail.numero_lote}</strong>? Esta ação não pode ser
                 desfeita.
               </p>
             </div>
-            <PinField pin={pin} setPin={setPin} pinError={pinError} />
+            <PinField pin={pin} setPin={setPin} pinError={pinError} danger />
             <ErrorMsg msg={modalError} />
             <ModalActions
               onCancel={closeModal}

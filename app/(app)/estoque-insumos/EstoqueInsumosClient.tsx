@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { Trash2, Search, AlertTriangle } from "lucide-react";
 import {
   createInsumo,
   novaEntrada,
@@ -70,7 +70,7 @@ function Modal({
           <h2 className="text-white font-semibold text-lg">{title}</h2>
           <button
             onClick={onClose}
-            className="text-white opacity-70 hover:opacity-100 text-2xl leading-none cursor-pointer"
+            className="modal-close text-white text-2xl leading-none cursor-pointer"
             aria-label="Fechar"
           >
             &times;
@@ -115,6 +115,11 @@ export default function EstoqueInsumosClient({
   const [isPending, startTransition] = useTransition();
 
   const [insumos, setInsumos] = useState<InsumoWithFlag[]>(initialInsumos);
+  const [searchQuery, setSearchQuery] = useState("");
+  const filteredInsumos = insumos.filter((i) =>
+    i.nome.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+      .includes(searchQuery.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase())
+  );
   const [activeTab, setActiveTab] = useState<TabType>("producao");
   const [loadingTab, setLoadingTab] = useState(false);
   const [modal, setModal] = useState<ModalType>(null);
@@ -401,6 +406,7 @@ export default function EstoqueInsumosClient({
       const novoItem: InsumoWithFlag = {
         id: crypto.randomUUID(),
         created_at: null,
+        categoria: null,
         nome: novoNome.trim(),
         unidade: novoUnidade,
         estoque_atual: atual,
@@ -408,7 +414,7 @@ export default function EstoqueInsumosClient({
         custo_unitario: custo,
         custo_unidade: novoCustoUnidade,
         tipo: activeTab,
-        estoque_baixo: atual < seg,
+        estoque_baixo: atual <= seg,
       };
       setInsumos((prev) =>
         [...prev, novoItem].sort((a, b) => a.nome.localeCompare(b.nome))
@@ -435,7 +441,7 @@ export default function EstoqueInsumosClient({
             ? {
                 ...ins,
                 estoque_atual: novoAtual,
-                estoque_baixo: novoAtual < ins.estoque_seguranca,
+                estoque_baixo: novoAtual <= ins.estoque_seguranca,
               }
             : ins
         )
@@ -461,7 +467,7 @@ export default function EstoqueInsumosClient({
             ? {
                 ...ins,
                 estoque_atual: qtd,
-                estoque_baixo: qtd < ins.estoque_seguranca,
+                estoque_baixo: qtd <= ins.estoque_seguranca,
               }
             : ins
         )
@@ -552,10 +558,10 @@ export default function EstoqueInsumosClient({
             <button
               key={tab.key}
               onClick={() => handleTabChange(tab.key)}
-              className="px-4 py-2 rounded-lg text-sm font-semibold transition"
+              className={`tab-btn px-4 py-2 rounded-lg text-sm font-semibold${isActive ? " tab-active" : ""}`}
               style={
                 isActive
-                  ? { backgroundColor: "#1565C0", color: "#ffffff", cursor: "pointer" }
+                  ? { cursor: "pointer" }
                   : { border: "1px solid #E5E7EB", color: "#6B7280", cursor: "pointer" }
               }
             >
@@ -565,17 +571,63 @@ export default function EstoqueInsumosClient({
         })}
       </div>
 
+      {/* Search */}
+      <div className="mb-4 relative bg-white shadow-sm rounded-lg">
+        <Search
+          size={16}
+          color="#9CA3AF"
+          style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }}
+        />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Pesquisar insumo..."
+          className="w-full rounded-lg border border-gray-200 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+          style={{ paddingLeft: 36, paddingRight: searchQuery ? 36 : 16 }}
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery("")}
+            aria-label="Limpar pesquisa"
+            className="text-gray-400 hover:text-gray-600"
+            style={{
+              position: "absolute",
+              right: 12,
+              top: "50%",
+              transform: "translateY(-50%)",
+              cursor: "pointer",
+              fontSize: 18,
+              lineHeight: 1,
+              background: "none",
+              border: "none",
+            }}
+          >
+            &times;
+          </button>
+        )}
+      </div>
+
       {/* Table */}
       <div className="overflow-x-auto rounded-lg shadow">
         <table className="w-full text-sm border-collapse">
           <thead>
-            <tr style={{ backgroundColor: "#1565C0" }}>
+            <tr
+              style={{
+                background: "linear-gradient(135deg, #1565C0 0%, #1976D2 100%)",
+                boxShadow: "0 2px 8px rgba(21,101,192,0.2)",
+              }}
+            >
               {["Insumo", "Unidade", "Estoque Atual", "Est. Segurança", ...(isAdmin ? ["Custo Unit. (R$)"] : []), "Ações"].map(
                 (h) => (
                   <th
                     key={h}
                     className="text-left text-white font-bold px-4 py-4"
-                    style={{ fontSize: 13 }}
+                    style={{
+                      fontSize: 13,
+                      letterSpacing: "0.08em",
+                      textAlign: h === "Estoque Atual" || h === "Est. Segurança" ? "right" : "left",
+                    }}
                   >
                     {h}
                   </th>
@@ -585,28 +637,37 @@ export default function EstoqueInsumosClient({
           </thead>
           <tbody>
             {loadingTab && (
-              <tr>
+              <tr className="table-row-hover">
                 <td colSpan={isAdmin ? 6 : 5} className="text-center py-10 text-gray-400">
                   Carregando...
                 </td>
               </tr>
             )}
-            {!loadingTab && insumos.length === 0 && (
-              <tr>
+            {!loadingTab && filteredInsumos.length === 0 && (
+              <tr className="table-row-hover">
                 <td colSpan={isAdmin ? 6 : 5} className="text-center py-10 text-gray-400">
-                  Nenhum insumo cadastrado.
+                  {searchQuery
+                    ? `Nenhum insumo encontrado para '${searchQuery}'`
+                    : "Nenhum insumo cadastrado."}
                 </td>
               </tr>
             )}
             {!loadingTab &&
-              insumos.map((ins, idx) => {
+              filteredInsumos.map((ins, idx) => {
               const rowBg = ins.estoque_baixo
                 ? "#FFF3CD"
                 : idx % 2 === 0
                 ? "#F0F7FF"
                 : "#ffffff";
               return (
-                <tr key={ins.id} style={{ backgroundColor: rowBg }}>
+                <tr
+                  key={ins.id}
+                  className="table-row-hover"
+                  style={{
+                    backgroundColor: rowBg,
+                    ...(ins.estoque_baixo ? { borderLeft: "3px solid #F59E0B" } : {}),
+                  }}
+                >
                   <td className="px-4 py-4">
                     <button
                       onClick={() => openHistorico(ins)}
@@ -614,7 +675,7 @@ export default function EstoqueInsumosClient({
                       style={{ color: "#1565C0", cursor: "pointer" }}
                     >
                       {ins.estoque_baixo && (
-                        <span style={{ color: "#F59E0B" }}>
+                        <span style={{ color: "#D97706", fontSize: 18 }}>
                           <WarnIcon />
                         </span>
                       )}
@@ -622,10 +683,19 @@ export default function EstoqueInsumosClient({
                     </button>
                   </td>
                   <td className="px-4 py-4 text-gray-700">{ins.unidade}</td>
-                  <td className="px-4 py-4 font-semibold" style={{ color: ins.estoque_baixo ? "#856404" : "#1A3A6B" }}>
+                  <td
+                    className="px-4 py-4 font-semibold"
+                    style={{
+                      textAlign: "right",
+                      fontWeight: ins.estoque_baixo ? 700 : 600,
+                      color: ins.estoque_baixo ? "#D97706" : "#1A3A6B",
+                    }}
+                  >
                     {ins.estoque_atual}
                   </td>
-                  <td className="px-4 py-4 text-gray-700">{ins.estoque_seguranca}</td>
+                  <td className="px-4 py-4 text-gray-700" style={{ textAlign: "right" }}>
+                    {ins.estoque_seguranca}
+                  </td>
                   {isAdmin && (
                     <td className="px-4 py-4 text-gray-700">
                       {ins.custo_unitario != null
@@ -633,60 +703,53 @@ export default function EstoqueInsumosClient({
                         : "—"}
                     </td>
                   )}
-                  <td className="px-4 py-4 flex gap-2">
-                    <button
-                      onClick={() => openEntrada(ins)}
-                      className="px-3 py-1 rounded-lg text-white text-xs font-semibold transition"
-                      style={{ backgroundColor: "#16A34A", cursor: "pointer" }}
-                      onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#15803D")}
-                      onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#16A34A")}
-                    >
-                      Entrada
-                    </button>
-                    <button
-                      onClick={() => openAtualizacao(ins)}
-                      className="px-3 py-1 rounded-lg text-white text-xs font-semibold transition"
-                      style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
-                      onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#1248A0")}
-                      onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#1565C0")}
-                    >
-                      Atualizar
-                    </button>
-                    {isAdmin && (
-                      <button
-                        onClick={() => openEditar(ins)}
-                        className="px-3 py-1 rounded-lg text-white text-xs font-semibold transition"
-                        style={{ backgroundColor: "#1976D2", cursor: "pointer" }}
-                        onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#1259A0")}
-                        onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#1976D2")}
-                      >
-                        Editar
-                      </button>
-                    )}
-                    {isAdmin && (
-                      <button
-                        onClick={() => openExcluir(ins)}
-                        title="Excluir insumo"
-                        style={{
-                          width: "32px",
-                          height: "32px",
-                          minWidth: "32px",
-                          minHeight: "32px",
-                          borderRadius: "50%",
-                          backgroundColor: "#C62828",
-                          color: "white",
-                          border: "none",
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          padding: "0",
-                          flexShrink: 0,
-                        }}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    )}
+                  <td className="px-4 py-4">
+                    <div className="flex items-center gap-2">
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => openEntrada(ins)}
+                          className="px-3 py-1 rounded-lg text-white text-xs font-semibold hover:brightness-110 transition-all active:scale-95"
+                          style={{ backgroundColor: "#16A34A", cursor: "pointer" }}
+                        >
+                          Entrada
+                        </button>
+                        <button
+                          onClick={() => openAtualizacao(ins)}
+                          className="px-3 py-1 rounded-lg text-white text-xs font-semibold hover:brightness-110 transition-all active:scale-95"
+                          style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
+                        >
+                          Atualizar
+                        </button>
+                      </div>
+                      <div style={{ width: 1, height: 20, backgroundColor: "#E0E0E0", flexShrink: 0 }} />
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => openEditar(ins)}
+                          className="px-3 py-1 rounded-lg text-white text-xs font-semibold hover:brightness-110 transition-all active:scale-95"
+                          style={{ backgroundColor: "#1976D2", cursor: "pointer" }}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => openExcluir(ins)}
+                          title="Excluir insumo"
+                          className="btn-icon"
+                          style={{
+                            width: "32px",
+                            height: "32px",
+                            minWidth: "32px",
+                            minHeight: "32px",
+                            backgroundColor: "#C62828",
+                            color: "white",
+                            border: "none",
+                            padding: "0",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
                   </td>
                 </tr>
               );
@@ -1072,14 +1135,17 @@ export default function EstoqueInsumosClient({
           <div className="bg-white rounded-lg shadow-2xl w-full max-w-sm">
             <div className="px-6 py-5 flex flex-col gap-4">
               <div className="flex items-start gap-3">
-                <span className="text-3xl flex-shrink-0 mt-0.5" aria-hidden="true">
-                  ⚠️
-                </span>
+                <AlertTriangle
+                  size={28}
+                  color="#C62828"
+                  className="flex-shrink-0 mt-0.5"
+                  aria-hidden="true"
+                />
                 <div>
                   <h2 className="font-bold text-lg mb-1" style={{ color: "#B71C1C" }}>
-                    Excluir Insumo
+                    Confirmar Exclusão
                   </h2>
-                  <p className="text-sm text-gray-700">
+                  <p style={{ fontSize: 15, color: "#1A1A1A", fontWeight: 500 }}>
                     Tem certeza que deseja excluir{" "}
                     <strong>{selected.nome}</strong>? Esta ação não pode ser
                     desfeita.
@@ -1089,6 +1155,7 @@ export default function EstoqueInsumosClient({
               <Field label="PIN de confirmação">
                 <input
                   className={inputCls}
+                  style={{ border: "2px solid #E53935" }}
                   type="password"
                   maxLength={4}
                   value={pin}
@@ -1115,7 +1182,7 @@ export default function EstoqueInsumosClient({
                   onClick={handleConfirmExcluir}
                   disabled={isPending}
                   className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
-                  style={{ backgroundColor: "#C62828", cursor: "pointer" }}
+                  style={{ backgroundColor: "#C62828", cursor: "pointer", boxShadow: "0 4px 16px rgba(198,40,40,0.4)" }}
                 >
                   {isPending ? "Excluindo..." : "EXCLUIR"}
                 </button>
@@ -1144,7 +1211,7 @@ export default function EstoqueInsumosClient({
               </h2>
               <button
                 onClick={closeModal}
-                className="text-white opacity-70 hover:opacity-100 text-2xl leading-none cursor-pointer"
+                className="modal-close text-white text-2xl leading-none cursor-pointer"
               >
                 &times;
               </button>

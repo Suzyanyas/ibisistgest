@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { Calendar, Package, CheckCircle } from "lucide-react";
 import {
   getAgendaProducao,
   getAgendaAtrasada,
   getLotesEmEnvase,
   getInsumosAbaixoMinimo,
   getProdutosAbaixoMinimo,
+  getAtividadeRecente,
   toggleAgendaItem,
   addAgendaItem,
   deleteAgendaItem,
@@ -15,6 +17,7 @@ import {
   type LoteEnvaseItem,
   type InsumoAbaixo,
   type ProdutoAbaixo,
+  type AtividadeItem,
 } from "@/app/actions/dashboard";
 import type { FormulaRow } from "@/app/actions/formulas";
 
@@ -36,6 +39,27 @@ function formatDatePtBR(iso: string): string {
     year: "2-digit",
   });
   return `${weekday} ${dateStr}`;
+}
+
+function formatRelativeTime(iso: string): string {
+  const date = new Date(iso);
+  const diffMs = Date.now() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60_000);
+  if (diffMin < 1) return "agora mesmo";
+  if (diffMin < 60) return `há ${diffMin} min`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `há ${diffH} ${diffH === 1 ? "hora" : "horas"}`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD < 7) return `há ${diffD} ${diffD === 1 ? "dia" : "dias"}`;
+  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" });
+}
+
+function activityDotColor(action: string): string {
+  if (action.includes("Novo lote")) return "#1565C0";
+  if (action.includes("Entrada de insumo")) return "#16A34A";
+  if (action.includes("Ajuste de insumo")) return "#F59E0B";
+  if (action.includes("Retirada de produto")) return "#E53935";
+  return "#9CA3AF";
 }
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
@@ -65,7 +89,7 @@ function Modal({
           <h2 className="text-white font-semibold text-base">{title}</h2>
           <button
             onClick={onClose}
-            className="text-white opacity-70 hover:opacity-100 text-2xl leading-none"
+            className="modal-close text-white text-2xl leading-none"
           >
             &times;
           </button>
@@ -86,11 +110,13 @@ function Card({
   bg,
   gradient,
   className = "",
+  style,
 }: {
   children: React.ReactNode;
   bg?: string;
   gradient?: string;
   className?: string;
+  style?: React.CSSProperties;
 }) {
   return (
     <div
@@ -98,11 +124,70 @@ function Card({
       style={{
         background: gradient ?? bg,
         borderRadius: 16,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
+        boxShadow: "0 8px 32px rgba(21,101,192,0.28)",
+        ...style,
       }}
     >
       {children}
     </div>
+  );
+}
+
+function KpiBadge({
+  count,
+  variant,
+}: {
+  count: number;
+  variant: "white" | "amber";
+}) {
+  if (count === 0) {
+    const zeroStyle =
+      variant === "white"
+        ? { background: "rgba(255,255,255,0.2)", color: "#A5D6A7" }
+        : { background: "rgba(245,158,11,0.15)", color: "#16A34A" };
+    return (
+      <span
+        aria-hidden="true"
+        style={{
+          ...zeroStyle,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 28,
+          height: 28,
+          borderRadius: 99,
+          fontSize: 16,
+          fontWeight: 800,
+          flexShrink: 0,
+        }}
+      >
+        ✓
+      </span>
+    );
+  }
+  const badgeStyle =
+    variant === "white"
+      ? {
+          background: "rgba(255,255,255,0.2)",
+          color: "#ffffff",
+        }
+      : {
+          background: "rgba(245,158,11,0.15)",
+          color: "#92400E",
+        };
+  return (
+    <span
+      style={{
+        ...badgeStyle,
+        borderRadius: 99,
+        padding: "2px 10px",
+        fontSize: 22,
+        fontWeight: 800,
+        flexShrink: 0,
+      }}
+    >
+      {count}
+    </span>
   );
 }
 
@@ -116,6 +201,8 @@ export default function DashboardClient({
   initialInsumosAbaixo,
   initialProdutosAbaixo,
   formulas,
+  initialAtividadeRecente,
+  isAdmin,
 }: {
   today: string;
   initialAgendaHoje: AgendaItemWithFormula[];
@@ -124,6 +211,8 @@ export default function DashboardClient({
   initialInsumosAbaixo: InsumoAbaixo[];
   initialProdutosAbaixo: ProdutoAbaixo[];
   formulas: FormulaRow[];
+  initialAtividadeRecente: AtividadeItem[];
+  isAdmin: boolean;
 }) {
   const router = useRouter();
 
@@ -137,6 +226,9 @@ export default function DashboardClient({
     useState<InsumoAbaixo[]>(initialInsumosAbaixo);
   const [produtosAbaixo, setProdutosAbaixo] =
     useState<ProdutoAbaixo[]>(initialProdutosAbaixo);
+  const [atividadeRecente, setAtividadeRecente] =
+    useState<AtividadeItem[]>(initialAtividadeRecente);
+  const [showAllEstoque, setShowAllEstoque] = useState(false);
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
@@ -150,23 +242,28 @@ export default function DashboardClient({
   // Per-item toggle loading set
   const [toggling, setToggling] = useState<Set<string>>(new Set());
 
+  // Atividade recente: show 5 by default, expand on "Ver mais"
+  const [showAllAtividade, setShowAllAtividade] = useState(false);
+
   // ── Refresh ──
 
   const refresh = useCallback(async () => {
     const day = todayStr();
-    const [ah, aa, le, ia, pa] = await Promise.all([
+    const [ah, aa, le, ia, pa, at] = await Promise.all([
       getAgendaProducao(day),
       getAgendaAtrasada(),
       getLotesEmEnvase(),
       getInsumosAbaixoMinimo(),
       getProdutosAbaixoMinimo(),
+      isAdmin ? getAtividadeRecente() : Promise.resolve(null),
     ]);
     setAgendaHoje(ah);
     setAgendaAtrasada(aa);
     setLotesEnvase(le);
     setInsumosAbaixo(ia);
     setProdutosAbaixo(pa);
-  }, []);
+    if (at) setAtividadeRecente(at);
+  }, [isAdmin]);
 
   useEffect(() => {
     const id = setInterval(refresh, 60_000);
@@ -249,17 +346,26 @@ export default function DashboardClient({
     ...agendaHoje,
   ];
 
-  const blueGradient = "linear-gradient(135deg, #1565C0 0%, #1976D2 100%)";
+  const agendaGradient = "linear-gradient(135deg, #1A3A6B 0%, #1565C0 100%)";
+  const envaseGradient = "linear-gradient(135deg, #1565C0 0%, #0288D1 100%)";
+  const produtoGradient = "linear-gradient(135deg, #1565C0 0%, #00897B 100%)";
 
   return (
     <div className="px-6 py-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
 
         {/* ── Card 1: Agenda ── */}
-        <Card gradient={blueGradient}>
-          <div className="px-4 pt-4 pb-2 flex items-start justify-between gap-2">
+        <Card gradient={agendaGradient} style={{ borderTop: "3px solid #00BCD4" }}>
+          <div
+            className="flex items-start justify-between gap-2"
+            style={{ padding: "20px 20px 12px 20px" }}
+          >
             <div>
-              <p className="text-white tracking-widest" style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 16, fontWeight: 700, letterSpacing: "0.08em" }}>
+              <p
+                className="text-white tracking-widest flex items-center"
+                style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.1em", gap: 8 }}
+              >
+                <Calendar size={16} color="rgba(255,255,255,0.7)" />
                 AGENDA DE PRODUÇÃO
               </p>
               <p
@@ -271,21 +377,17 @@ export default function DashboardClient({
             </div>
             <button
               onClick={openModal}
+              className="btn-icon"
               style={{
                 width: "32px",
                 height: "32px",
                 minWidth: "32px",
                 minHeight: "32px",
-                borderRadius: "50%",
                 border: "none",
                 background: "white",
                 color: "#1565C0",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
                 fontSize: "20px",
                 fontWeight: "700",
-                cursor: "pointer",
                 flexShrink: 0,
                 boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
               }}
@@ -295,7 +397,7 @@ export default function DashboardClient({
             </button>
           </div>
 
-          <ul className="flex-1 px-4 pb-4 flex flex-col overflow-y-auto">
+          <ul className="flex-1 px-4 pb-4 flex flex-col overflow-y-auto max-h-96">
             {allAgenda.length === 0 && (
               <li
                 className="py-2"
@@ -304,7 +406,7 @@ export default function DashboardClient({
                 Nenhum item na agenda.
               </li>
             )}
-            {allAgenda.map((item) => {
+            {allAgenda.map((item, idx) => {
               const isAtrasado =
                 !item.concluido && item.data_agenda < today;
               const isLoading = toggling.has(item.id);
@@ -313,10 +415,18 @@ export default function DashboardClient({
                 : isAtrasado
                 ? "#FFCDD2"
                 : "#ffffff";
+              const isLast =
+                idx === allAgenda.length - 1 && produtosAbaixo.length === 0;
               return (
                 <li
                   key={item.id}
-                  className="flex items-center gap-2 group py-1.5 border-b border-white/10 last:border-0"
+                  className="flex items-center gap-2 group"
+                  style={{
+                    padding: "8px 0",
+                    borderBottom: isLast
+                      ? "none"
+                      : "1px solid rgba(255,255,255,0.08)",
+                  }}
                 >
                   <button
                     onClick={() => handleToggle(item)}
@@ -365,7 +475,7 @@ export default function DashboardClient({
                   <button
                     onClick={() => handleDelete(item.id)}
                     disabled={isLoading}
-                    className="opacity-0 group-hover:opacity-100 text-white/50 hover:text-white/90 text-base leading-none transition disabled:opacity-30"
+                    className="opacity-0 group-hover:opacity-100 text-white/50 hover:text-white/90 text-base leading-none transition disabled:opacity-30 transition-all duration-150 active:scale-95"
                     title="Remover"
                   >
                     &times;
@@ -439,13 +549,21 @@ export default function DashboardClient({
         </Card>
 
         {/* ── Card 2: Envase ── */}
-        <Card gradient={blueGradient}>
-          <div className="px-4 pt-4 pb-2">
-            <p className="text-white tracking-widest" style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 16, fontWeight: 700, letterSpacing: "0.08em" }}>
+        <Card gradient={envaseGradient} style={{ borderTop: "3px solid #4FC3F7" }}>
+          <div
+            className="flex items-start justify-between gap-2"
+            style={{ padding: "20px 20px 12px 20px" }}
+          >
+            <p
+              className="text-white tracking-widest flex items-center"
+              style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.1em", gap: 8 }}
+            >
+              <Package size={16} color="rgba(255,255,255,0.7)" />
               ENVASE
             </p>
+            <KpiBadge count={lotesEnvase.length} variant="white" />
           </div>
-          <ul className="flex-1 px-4 pb-4 flex flex-col overflow-y-auto">
+          <ul className="flex-1 px-4 pb-4 flex flex-col overflow-y-auto max-h-96">
             {lotesEnvase.length === 0 && (
               <li
                 className="py-2"
@@ -457,8 +575,8 @@ export default function DashboardClient({
             {lotesEnvase.map((l) => (
               <li
                 key={l.id}
-                className="flex items-center gap-2 text-white py-1.5 border-b border-white/10 last:border-0"
-                style={{ fontSize: 15 }}
+                className="flex items-center gap-2 text-white border-b border-white/10 last:border-0"
+                style={{ fontSize: 15, padding: "8px 0" }}
               >
                 <span
                   className="w-4 h-4 rounded border-2 border-white/60 flex-shrink-0"
@@ -483,19 +601,29 @@ export default function DashboardClient({
         </Card>
 
         {/* ── Card 3: Produto Acabado ── */}
-        <Card gradient={blueGradient}>
-          <div className="px-4 pt-4 pb-2">
-            <p className="text-white tracking-widest" style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 16, fontWeight: 700, letterSpacing: "0.08em" }}>
-              PRODUTO ACABADO
-            </p>
-            <p
-              className="mt-0.5"
-              style={{ color: "rgba(255,255,255,0.7)", fontSize: 14 }}
-            >
-              Abaixo do mínimo
-            </p>
+        <Card gradient={produtoGradient} style={{ borderTop: "3px solid #4DB6AC" }}>
+          <div
+            className="flex items-start justify-between gap-2"
+            style={{ padding: "20px 20px 12px 20px" }}
+          >
+            <div>
+              <p
+                className="text-white tracking-widest flex items-center"
+                style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.1em", gap: 8 }}
+              >
+                <CheckCircle size={16} color="rgba(255,255,255,0.7)" />
+                PRODUTO ACABADO
+              </p>
+              <p
+                className="mt-0.5"
+                style={{ color: "rgba(255,255,255,0.7)", fontSize: 14 }}
+              >
+                Abaixo do mínimo
+              </p>
+            </div>
+            <KpiBadge count={produtosAbaixo.length} variant="white" />
           </div>
-          <ul className="flex-1 px-4 pb-4 flex flex-col overflow-y-auto">
+          <ul className="flex-1 px-4 pb-4 flex flex-col overflow-y-auto max-h-96">
             {produtosAbaixo.length === 0 ? (
               <li className="flex items-center gap-2 py-2" style={{ fontSize: 14 }}>
                 <span className="text-green-300 text-lg">✓</span>
@@ -507,8 +635,8 @@ export default function DashboardClient({
               produtosAbaixo.map((p) => (
                 <li
                   key={p.id}
-                  className="flex items-center justify-between text-white py-1.5 border-b border-white/10 last:border-0"
-                  style={{ fontSize: 15 }}
+                  className="flex items-center justify-between text-white border-b border-white/10 last:border-0"
+                  style={{ fontSize: 15, padding: "8px 0" }}
                 >
                   <span className="truncate">{p.nome}</span>
                   <span
@@ -524,28 +652,41 @@ export default function DashboardClient({
         </Card>
 
         {/* ── Card 4: Estoque Baixo Insumos ── */}
-        <Card bg="#FFF9C4">
-          <div className="px-4 pt-4 pb-2">
-            <p
-              className="tracking-widest flex items-center gap-1.5"
-              style={{ fontFamily: "var(--font-lora), Georgia, serif", color: "#1A3A6B", fontSize: 16, fontWeight: 700, letterSpacing: "0.08em" }}
-            >
-              <span aria-hidden="true" style={{ fontSize: 18, color: "#F59E0B", lineHeight: 1 }}>⚠</span> ESTOQUE BAIXO
-            </p>
-            <p className="mt-0.5 text-gray-600" style={{ fontSize: 14 }}>Insumos</p>
+        <Card
+          gradient="linear-gradient(135deg, #FFF8E1 0%, #FFF3CD 100%)"
+          style={{ borderTop: "3px solid #F59E0B", boxShadow: "0 8px 32px rgba(245,158,11,0.2)" }}
+        >
+          <div
+            className="flex items-start justify-between gap-2"
+            style={{ padding: "20px 20px 12px 20px" }}
+          >
+            <div>
+              <p
+                className="tracking-widest flex items-center"
+                style={{ fontFamily: "var(--font-lora), Georgia, serif", color: "#1A3A6B", fontSize: 13, fontWeight: 700, letterSpacing: "0.1em", gap: 8 }}
+              >
+                <span aria-hidden="true" style={{ fontSize: 20, color: "#F59E0B", lineHeight: 1 }}>⚠</span> ESTOQUE BAIXO
+              </p>
+              <p className="mt-0.5 text-gray-600" style={{ fontSize: 14 }}>Insumos</p>
+            </div>
+            <KpiBadge count={insumosAbaixo.length} variant="amber" />
           </div>
-          <ul className="flex-1 px-4 pb-4 flex flex-col overflow-y-auto">
+          <ul
+            className={`flex-1 px-4 pb-4 flex flex-col ${
+              showAllEstoque ? "overflow-y-auto max-h-96" : ""
+            }`}
+          >
             {insumosAbaixo.length === 0 ? (
               <li className="flex items-center gap-2 py-1.5" style={{ fontSize: 14 }}>
                 <span className="text-green-600 text-lg">✓</span>
                 <span className="text-gray-700">Estoque OK</span>
               </li>
             ) : (
-              insumosAbaixo.map((ins) => (
+              (showAllEstoque ? insumosAbaixo : insumosAbaixo.slice(0, 5)).map((ins) => (
                 <li
                   key={ins.id}
-                  className="flex items-center justify-between py-1.5 border-b border-gray-200 last:border-0"
-                  style={{ fontSize: 15 }}
+                  className="flex items-center justify-between border-b border-gray-200 last:border-0"
+                  style={{ fontSize: 15, padding: "8px 0" }}
                 >
                   <span className="text-gray-800 truncate">{ins.nome}</span>
                   <span
@@ -557,9 +698,113 @@ export default function DashboardClient({
                 </li>
               ))
             )}
+            {insumosAbaixo.length > 5 && (
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setShowAllEstoque((v) => !v)}
+                  className="text-xs font-semibold text-amber-700 underline cursor-pointer mt-2"
+                >
+                  {showAllEstoque ? "Ver menos" : `Ver todos (${insumosAbaixo.length})`}
+                </button>
+              </li>
+            )}
           </ul>
         </Card>
       </div>
+
+      {/* ── Card 5: Atividade Recente ── */}
+      {isAdmin && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-4">
+          <Card
+            bg="#ffffff"
+            className="border"
+            style={{
+              borderColor: "#E8F4FF",
+              borderLeft: "3px solid #1565C0",
+              boxShadow: "0 4px 20px rgba(21,101,192,0.08)",
+            }}
+          >
+            <div style={{ padding: "20px 20px 12px 20px" }}>
+              <p
+                className="tracking-widest"
+                style={{
+                  fontFamily: "var(--font-lora), Georgia, serif",
+                  color: "#1A3A6B",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: "0.1em",
+                }}
+              >
+                ATIVIDADE RECENTE
+              </p>
+            </div>
+            <ul
+              className={`px-4 flex flex-col overflow-y-auto max-h-96 ${
+                showAllAtividade ? "pb-2" : "pb-0"
+              }`}
+            >
+              {atividadeRecente.length === 0 && (
+                <li className="py-2 text-gray-500" style={{ fontSize: 13 }}>
+                  Nenhuma atividade registada.
+                </li>
+              )}
+              {(showAllAtividade
+                ? atividadeRecente
+                : atividadeRecente.slice(0, 5)
+              ).map((item, idx) => (
+                <li
+                  key={`${item.created_at}-${idx}`}
+                  className="flex items-center justify-between gap-2 py-1 border-b border-gray-100 last:border-0"
+                >
+                  <div className="min-w-0 truncate flex items-center">
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        display: "inline-block",
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        marginRight: 8,
+                        flexShrink: 0,
+                        backgroundColor: activityDotColor(item.action),
+                      }}
+                    />
+                    <span className="font-semibold text-gray-800" style={{ fontSize: 12.5 }}>
+                      {item.action}
+                    </span>
+                    <span className="text-gray-500 ml-1.5" style={{ fontSize: 12.5 }}>
+                      {item.detail}
+                    </span>
+                    {item.user_email && (
+                      <span className="ml-1.5" style={{ fontSize: 11, color: "#00ACC1" }}>
+                        · {item.user_email}
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    className="flex-shrink-0 text-gray-400"
+                    style={{ fontSize: 11 }}
+                  >
+                    {formatRelativeTime(item.created_at)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {atividadeRecente.length > 5 && (
+              <div className="px-4 pb-3 pt-1">
+                <button
+                  onClick={() => setShowAllAtividade((v) => !v)}
+                  className="text-xs font-semibold hover:underline transition-all duration-150 hover:underline hover:text-blue-700"
+                  style={{ color: "#1565C0" }}
+                >
+                  {showAllAtividade ? "Ver menos" : "Ver mais"}
+                </button>
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
 
       {/* ── Modal: Adicionar à Agenda ── */}
       {showModal && (

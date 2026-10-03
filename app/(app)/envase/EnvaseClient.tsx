@@ -9,19 +9,40 @@ import {
   concluirEnvase,
   getHistoricoEnvases,
   getLoteInsumos,
-  getEmbalagemConfig,
-  saveEmbalagemConfig,
   getEstoqueEmbalagens,
+  getEmbalagensDisponiveisEnvase,
   type LoteEnvaseWithFormula,
   type EnvaseRow,
   type HistoricoEnvaseItem,
   type LoteInsumoItem,
-  type EmbalagemConfigItem,
   type EstoqueEmbalagemItem,
+  type EmbalagensDisponiveisEnvase,
+  type EmbalagemSelecoes,
 } from "@/app/actions/envase";
-import { getInsumosList } from "@/app/actions/producao";
 
 const TAMANHOS = ["1L", "2L", "5L", "20L"] as const;
+
+const TAMANHO_PARA_CATEGORIA_GARRAFA: Record<string, keyof EmbalagensDisponiveisEnvase> = {
+  "1L": "garrafa_1l",
+  "2L": "garrafa_2l",
+  "5L": "garrafa_5l",
+  "20L": "garrafa_20l",
+};
+
+type EmbalagemTamanhoState = {
+  garrafa_id: string | null;
+  tampa_id: string | null;
+  alca_id: string | null;
+};
+
+const EMBALAGEM_STATE_VAZIO: EmbalagemTamanhoState = {
+  garrafa_id: null,
+  tampa_id: null,
+  alca_id: null,
+};
+
+const selectCls =
+  "border border-gray-200 rounded-lg px-2 py-1.5 w-full focus:outline-none focus:ring-2 focus:ring-blue-600";
 
 function formatDataEnvase(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -35,6 +56,13 @@ function formatDataEnvase(iso: string | null | undefined): string {
 
 function nowStr() {
   return new Date().toISOString().slice(0, 16);
+}
+
+function formatDateDDMMYYYY(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
 }
 
 const inputCls =
@@ -69,18 +97,10 @@ export default function EnvaseClient({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(true);
 
-  const [activeTab, setActiveTab] = useState<"em_curso" | "historico" | "embalagens">("em_curso");
+  const [activeTab, setActiveTab] = useState<"em_curso" | "historico">("em_curso");
   const [historico, setHistorico] = useState<HistoricoEnvaseItem[] | null>(null);
   const [historicoLoading, setHistoricoLoading] = useState(false);
   const [historicoError, setHistoricoError] = useState<string | null>(null);
-
-  const [embalagemConfig, setEmbalagemConfig] = useState<EmbalagemConfigItem[] | null>(null);
-  const [embalagemInsumos, setEmbalagemInsumos] = useState<{ id: string; nome: string; unidade: string }[]>([]);
-  const [embalagemSelecionado, setEmbalagemSelecionado] = useState<Record<string, string>>({});
-  const [embalagemLoading, setEmbalagemLoading] = useState(false);
-  const [embalagemError, setEmbalagemError] = useState<string | null>(null);
-  const [embalagemSaving, setEmbalagemSaving] = useState<string | null>(null);
-  const [embalagemSuccess, setEmbalagemSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     const loteId = searchParams.get("lote_id");
@@ -98,6 +118,19 @@ export default function EnvaseClient({
   const [dataEnvase, setDataEnvase] = useState(nowStr());
 
   const [estoqueEmbalagens, setEstoqueEmbalagens] = useState<Record<string, EstoqueEmbalagemItem>>({});
+
+  const [embalagensDisponiveis, setEmbalagensDisponiveis] = useState<EmbalagensDisponiveisEnvase | null>(null);
+  const [embalagemState, setEmbalagemState] = useState<Record<string, EmbalagemTamanhoState>>(() => {
+    const initial: Record<string, EmbalagemTamanhoState> = {};
+    for (const t of TAMANHOS) initial[t] = { ...EMBALAGEM_STATE_VAZIO };
+    return initial;
+  });
+
+  useEffect(() => {
+    getEmbalagensDisponiveisEnvase()
+      .then(setEmbalagensDisponiveis)
+      .catch(() => setEmbalagensDisponiveis(null));
+  }, []);
 
   const [insumosOpen, setInsumosOpen] = useState(false);
   const [insumosCache, setInsumosCache] = useState<Record<string, LoteInsumoItem[]>>({});
@@ -123,6 +156,11 @@ export default function EnvaseClient({
     setErrorMsg(null);
     setHasSaved(false);
     setEstoqueEmbalagens({});
+    setEmbalagemState(() => {
+      const initial: Record<string, EmbalagemTamanhoState> = {};
+      for (const t of TAMANHOS) initial[t] = { ...EMBALAGEM_STATE_VAZIO };
+      return initial;
+    });
   }, []);
 
   const loadEnvase = useCallback(
@@ -183,7 +221,7 @@ export default function EnvaseClient({
     setErrorMsg(null);
     setConcluirLoading(true);
     try {
-      await concluirEnvase(selectedId);
+      await concluirEnvase(selectedId, embalagemState as EmbalagemSelecoes);
       setLotes((prev) => prev.filter((l) => l.id !== selectedId));
       setSelectedId(null);
     } catch (e) {
@@ -191,6 +229,93 @@ export default function EnvaseClient({
     } finally {
       setConcluirLoading(false);
     }
+  }
+
+  async function generateEtiquetasPDF() {
+    if (!selectedLote) return;
+    const { default: jsPDF } = await import("jspdf");
+    const JsBarcode = (await import("jsbarcode")).default;
+
+    const produtoNome = selectedLote.formulas?.nome ?? "—";
+    const numeroLote = selectedLote.numero_lote;
+    const fragancia = selectedLote.fragancia;
+
+    const dataProducao = new Date(selectedLote.data_producao);
+    const dataValidade = new Date(dataProducao);
+    dataValidade.setMonth(dataValidade.getMonth() + 18);
+    const fabStr = formatDateDDMMYYYY(dataProducao);
+    const valStr = formatDateDDMMYYYY(dataValidade);
+
+    const tamanhos: { label: string; qtd: number }[] = [
+      { label: "1L", qtd: qtd1l },
+      { label: "2L", qtd: qtd2l },
+      { label: "5L", qtd: qtd5l },
+      { label: "20L", qtd: qtd20l },
+    ];
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: [80, 20] });
+    let firstPage = true;
+
+    function truncateToWidth(text: string, maxWidth: number): string {
+      if (doc.getTextWidth(text) <= maxWidth) return text;
+      let truncated = text;
+      while (truncated.length > 0 && doc.getTextWidth(truncated + "...") > maxWidth) {
+        truncated = truncated.slice(0, -1);
+      }
+      return truncated + "...";
+    }
+
+    const tamanhoNomeCompleto: Record<string, string> = {
+      "1L": "1 LITRO",
+      "2L": "2 LITROS",
+      "5L": "5 LITROS",
+      "20L": "20 LITROS",
+    };
+
+    function drawLabel(xOffset: number, tamanho: string) {
+      const barcodeValue = `${produtoNome} ${tamanho}`;
+      const canvas = document.createElement("canvas");
+      JsBarcode(canvas, barcodeValue, { format: "CODE128", displayValue: false });
+      const barcodeData = canvas.toDataURL("image/png");
+      doc.addImage(barcodeData, "PNG", xOffset + 1, 1, 38, 8);
+
+      const maxWidth = 38;
+      let y = 11;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(5);
+      const linha1 = `${produtoNome} ${tamanhoNomeCompleto[tamanho] ?? tamanho}`.toUpperCase();
+      doc.text(truncateToWidth(linha1, maxWidth), xOffset + 1, y);
+      y += 2;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(5);
+      doc.text(`LOTE: ${numeroLote}`.toUpperCase(), xOffset + 1, y);
+      y += 2;
+      doc.text(`FAB: ${fabStr}  VAL: ${valStr}`, xOffset + 1, y);
+      if (fragancia) {
+        y += 2;
+        doc.text(`FRAGANCIA: ${fragancia}`, xOffset + 1, y);
+      }
+    }
+
+    for (const { label, qtd } of tamanhos) {
+      if (qtd <= 0) continue;
+      let remaining = qtd;
+      while (remaining > 0) {
+        if (!firstPage) doc.addPage([80, 20], "landscape");
+        firstPage = false;
+
+        drawLabel(0, label);
+        remaining -= 1;
+        if (remaining > 0) {
+          drawLabel(40, label);
+          remaining -= 1;
+        }
+      }
+    }
+
+    doc.save(`etiquetas-${numeroLote}.pdf`);
   }
 
   function handleConcluirClick() {
@@ -242,47 +367,6 @@ export default function EnvaseClient({
     }
   }
 
-  async function handleSelectEmbalagens() {
-    setActiveTab("embalagens");
-    if (embalagemConfig !== null) return;
-    setEmbalagemLoading(true);
-    setEmbalagemError(null);
-    try {
-      const [config, insumos] = await Promise.all([
-        getEmbalagemConfig(),
-        getInsumosList("producao"),
-      ]);
-      setEmbalagemConfig(config);
-      setEmbalagemInsumos(insumos);
-      const initial: Record<string, string> = {};
-      for (const tamanho of TAMANHOS) {
-        const existing = config.find((c) => c.tamanho === tamanho);
-        initial[tamanho] = existing?.insumo_id ?? "";
-      }
-      setEmbalagemSelecionado(initial);
-    } catch (e) {
-      setEmbalagemError(e instanceof Error ? e.message : "Erro ao carregar configuração.");
-    } finally {
-      setEmbalagemLoading(false);
-    }
-  }
-
-  async function handleSaveEmbalagem(tamanho: string) {
-    const insumo_id = embalagemSelecionado[tamanho];
-    if (!insumo_id) return;
-    setEmbalagemSaving(tamanho);
-    setEmbalagemError(null);
-    try {
-      await saveEmbalagemConfig(tamanho, insumo_id);
-      setEmbalagemSuccess("Configuração salva!");
-      setTimeout(() => setEmbalagemSuccess(null), 2000);
-    } catch (e) {
-      setEmbalagemError(e instanceof Error ? e.message : "Erro ao salvar.");
-    } finally {
-      setEmbalagemSaving(null);
-    }
-  }
-
   return (
     <div style={{ minHeight: "calc(100vh - 64px)" }}>
       {/* Tab bar */}
@@ -290,22 +374,22 @@ export default function EnvaseClient({
         className="flex border-b border-gray-200 bg-white"
         style={{ paddingLeft: 24, paddingRight: 24, paddingTop: 0 }}
       >
-        {(isAdmin ? (["em_curso", "historico", "embalagens"] as const) : (["em_curso", "historico"] as const)).map((tab) => {
-          const label = tab === "em_curso" ? "Em Curso" : tab === "historico" ? "Histórico" : "Embalagens";
+        {(["em_curso", "historico"] as const).map((tab) => {
+          const label = tab === "em_curso" ? "Em Curso" : "Histórico";
           const isActive = activeTab === tab;
           return (
             <button
               key={tab}
               onClick={() => {
                 if (tab === "historico") handleSelectHistorico();
-                else if (tab === "embalagens") handleSelectEmbalagens();
                 else setActiveTab("em_curso");
               }}
-              className="relative px-5 py-3 text-sm font-semibold transition"
+              className={`tab-btn relative px-5 py-3 text-sm font-semibold transition${isActive ? " tab-active-outline" : ""}`}
               style={{
-                color: isActive ? "#1565C0" : "#607D8B",
-                borderBottom: isActive ? "2px solid #1565C0" : "2px solid transparent",
-                background: "none",
+                color: isActive ? "#1565C0" : "#6B7A99",
+                borderBottom: isActive ? "3px solid #1565C0" : "3px solid transparent",
+                fontWeight: isActive ? 700 : 400,
+                background: "transparent",
                 cursor: "pointer",
                 marginBottom: -1,
               }}
@@ -321,14 +405,14 @@ export default function EnvaseClient({
         <div className="flex" style={{ minHeight: "calc(100vh - 64px - 45px)" }}>
           {/* Sidebar */}
           <aside
-            className={`flex-shrink-0 flex-col border-r border-gray-200 bg-white md:flex ${mobileSidebarOpen ? "flex" : "hidden"}`}
-            style={{ width: 220 }}
+            className={`flex-shrink-0 flex-col border-r-2 md:flex ${mobileSidebarOpen ? "flex" : "hidden"}`}
+            style={{ width: 220, background: "linear-gradient(180deg, #F8FAFF 0%, #EEF4FF 100%)", borderRightColor: "#E0EAFF" }}
           >
             <div
-              className="px-4 py-4 border-b border-blue-200"
-              style={{ backgroundColor: "#1565C0" }}
+              className="px-4 py-4"
+              style={{ borderBottom: "1px solid #E0EAFF" }}
             >
-              <span className="text-white font-semibold" style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 16, fontWeight: 600 }}>Envase</span>
+              <span style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 18, fontWeight: 700, color: "#1A3A6B" }}>Envase</span>
             </div>
             <ul className="flex-1 overflow-y-auto py-2">
               {lotes.length === 0 && (
@@ -342,13 +426,16 @@ export default function EnvaseClient({
                   <li key={l.id}>
                     <button
                       onClick={() => { setSelectedId(l.id); setMobileSidebarOpen(false); }}
-                      className="w-full text-left text-sm transition"
+                      className="w-full text-left text-sm transition sidebar-nav-premium"
                       style={{
-                        backgroundColor: isActive ? "#1565C0" : "transparent",
-                        color: isActive ? "#ffffff" : "#1A3A6B",
+                        background: isActive
+                          ? "linear-gradient(90deg, rgba(21,101,192,0.12) 0%, rgba(21,101,192,0.04) 100%)"
+                          : "transparent",
+                        borderLeft: isActive ? "3px solid #1565C0" : "3px solid transparent",
+                        color: isActive ? "#1565C0" : "#1A3A6B",
                         borderRadius: 8,
                         padding: "12px 16px",
-                        fontWeight: isActive ? 600 : 400,
+                        fontWeight: isActive ? 700 : 400,
                         margin: "0 4px",
                         width: "calc(100% - 8px)",
                         cursor: "pointer",
@@ -359,7 +446,7 @@ export default function EnvaseClient({
                       </div>
                       <div
                         className="text-xs mt-0.5"
-                        style={{ color: isActive ? "#BBDEFB" : "#607D8B" }}
+                        style={{ color: isActive ? "#1565C0" : "#607D8B" }}
                       >
                         <span>{l.numero_lote}</span>
                         <span className="mx-1">·</span>
@@ -373,10 +460,10 @@ export default function EnvaseClient({
           </aside>
 
           {/* Main panel */}
-          <main className={`flex-1 overflow-y-auto bg-white md:block ${!mobileSidebarOpen ? "block" : "hidden"}`} style={{ padding: 24 }}>
+          <main className={`flex-1 overflow-y-auto md:block ${!mobileSidebarOpen ? "block" : "hidden"}`} style={{ padding: 24, background: "linear-gradient(180deg, #F8FAFF 0%, #FFFFFF 80px)" }}>
             <button
               onClick={() => setMobileSidebarOpen(true)}
-              className="mb-4 flex items-center gap-1 text-sm font-semibold md:hidden"
+              className="mb-4 flex items-center gap-1 text-sm font-semibold md:hidden hover:bg-gray-100 transition-all active:scale-95"
               style={{ color: "#1565C0", cursor: "pointer" }}
             >
               ← Envase
@@ -398,21 +485,28 @@ export default function EnvaseClient({
             {selectedId && !formLoading && selectedLote && (
               <div className="max-w-xl">
                 {/* Header */}
-                <div className="mb-1 flex items-center gap-3 flex-wrap">
+                <div
+                  className="mb-1 flex items-center gap-3 flex-wrap"
+                  style={{ paddingBottom: 16, borderBottom: "1px solid #E8F4FF", marginBottom: 16 }}
+                >
                   <h2
-                    className="text-2xl font-bold"
-                    style={{ color: "#1A3A6B" }}
+                    style={{
+                      fontSize: 24,
+                      fontWeight: 700,
+                      color: "#1A3A6B",
+                      fontFamily: "var(--font-lora), Georgia, serif",
+                    }}
                   >
                     {selectedLote.formulas?.nome ?? "—"}
                   </h2>
                   <span
-                    className="px-2 py-0.5 rounded text-xs font-bold tracking-wider"
-                    style={{ backgroundColor: "#E3F2FD", color: "#1565C0" }}
+                    className="font-bold tracking-wider"
+                    style={{ backgroundColor: "#E8F4FF", color: "#1565C0", borderRadius: 8, padding: "3px 10px", fontSize: 13, fontWeight: 700 }}
                   >
                     {selectedLote.numero_lote}
                   </span>
                 </div>
-                <p className="text-sm text-gray-500 mb-1">
+                <p className="mb-1" style={{ fontSize: 13, color: "#6B7A99" }}>
                   Data de produção: <strong>{selectedLote.data_producao}</strong>
                 </p>
                 <p className="text-sm mb-2" style={{ color: "#1A3A6B" }}>
@@ -475,10 +569,10 @@ export default function EnvaseClient({
                     return (
                       <div
                         key={label}
-                        className="flex flex-col gap-2 bg-white shadow-sm p-4"
-                        style={{ border: "1px solid #e5e7eb", borderRadius: 12 }}
+                        className="qty-card flex flex-col gap-2 bg-white p-4"
+                        style={{ border: "1px solid #e5e7eb", borderRadius: 12, boxShadow: "0 2px 8px rgba(21,101,192,0.08)" }}
                       >
-                        <span style={{ fontWeight: 700, fontSize: 18, color: "#1565C0" }}>{label}</span>
+                        <span style={{ fontWeight: 800, fontSize: 20, color: "#1565C0" }}>{label}</span>
                         <input
                           className={inputCls}
                           type="number"
@@ -489,6 +583,7 @@ export default function EnvaseClient({
                             set(Math.max(0, Number(e.target.value)));
                             setHasSaved(false);
                           }}
+                          style={{ fontSize: 18, fontWeight: 600, textAlign: "center" }}
                         />
                         {!estoque && (
                           <p className="text-xs" style={{ color: "#9E9E9E" }}>
@@ -508,13 +603,80 @@ export default function EnvaseClient({
                             </Link>
                           </p>
                         )}
+                        {value > 0 && embalagensDisponiveis && (
+                          <div className="flex flex-col gap-2 mt-1">
+                            <div>
+                              <div style={{ fontSize: 11, color: "#6B7A99" }}>Garrafa</div>
+                              <select
+                                className={selectCls}
+                                style={{ fontSize: 13 }}
+                                value={embalagemState[label]?.garrafa_id ?? ""}
+                                onChange={(e) =>
+                                  setEmbalagemState((prev) => ({
+                                    ...prev,
+                                    [label]: { ...prev[label], garrafa_id: e.target.value || null },
+                                  }))
+                                }
+                              >
+                                <option value="">- Sem Garrafa -</option>
+                                {embalagensDisponiveis[TAMANHO_PARA_CATEGORIA_GARRAFA[label]].map((i) => (
+                                  <option key={i.id} value={i.id}>
+                                    {i.nome} ({i.estoque_atual} UN)
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 11, color: "#6B7A99" }}>Tampa</div>
+                              <select
+                                className={selectCls}
+                                style={{ fontSize: 13 }}
+                                value={embalagemState[label]?.tampa_id ?? ""}
+                                onChange={(e) =>
+                                  setEmbalagemState((prev) => ({
+                                    ...prev,
+                                    [label]: { ...prev[label], tampa_id: e.target.value || null },
+                                  }))
+                                }
+                              >
+                                <option value="">- Sem Tampa -</option>
+                                {embalagensDisponiveis.tampa.map((i) => (
+                                  <option key={i.id} value={i.id}>
+                                    {i.nome} ({i.estoque_atual} UN)
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 11, color: "#6B7A99" }}>Alça</div>
+                              <select
+                                className={selectCls}
+                                style={{ fontSize: 13 }}
+                                value={embalagemState[label]?.alca_id ?? ""}
+                                onChange={(e) =>
+                                  setEmbalagemState((prev) => ({
+                                    ...prev,
+                                    [label]: { ...prev[label], alca_id: e.target.value || null },
+                                  }))
+                                }
+                              >
+                                <option value="">- Sem Alça -</option>
+                                {embalagensDisponiveis.alca.map((i) => (
+                                  <option key={i.id} value={i.id}>
+                                    {i.nome} ({i.estoque_atual} UN)
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
 
                 {/* Summary */}
-                <p className="mb-2" style={{ color: "#1565C0", fontWeight: 700, fontSize: 18 }}>
+                <p className="mb-2" style={{ color: "#1565C0", fontWeight: 700, fontSize: 17 }}>
                   Total de unidades: {totalUnidades}
                 </p>
 
@@ -524,7 +686,7 @@ export default function EnvaseClient({
                   const diff = rendimentoReal - formulaRendimento;
                   return (
                     <div className="mb-4">
-                      <p style={{ color: "#1565C0", fontWeight: 700, fontSize: 15 }}>
+                      <p style={{ color: "#1565C0", fontWeight: 700, fontSize: 17 }}>
                         Rendimento Real: {rendimentoReal} L
                       </p>
                       {formulaRendimento > 0 && diff > 0 && (
@@ -583,6 +745,15 @@ export default function EnvaseClient({
                   >
                     {concluirLoading ? "Concluindo..." : "CONCLUIR LOTE"}
                   </button>
+                  {atLeastOneQtd && (
+                    <button
+                      onClick={generateEtiquetasPDF}
+                      className="flex-1 px-5 py-2 rounded-lg text-white text-sm font-bold hover:brightness-110 transition-all active:scale-95"
+                      style={{ backgroundColor: "#1A3A6B", cursor: "pointer" }}
+                    >
+                      Imprimir Etiquetas
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -677,77 +848,6 @@ export default function EnvaseClient({
                 </table>
               </div>
             )
-          )}
-        </div>
-      )}
-
-      {/* ── Embalagens tab ── */}
-      {activeTab === "embalagens" && isAdmin && (
-        <div style={{ padding: 24 }}>
-          {embalagemLoading && (
-            <p className="text-gray-400 text-sm">Carregando configuração...</p>
-          )}
-          {embalagemError && (
-            <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mb-4">
-              {embalagemError}
-            </p>
-          )}
-          {embalagemSuccess && (
-            <p className="text-sm text-green-700 bg-green-50 rounded px-3 py-2 mb-4">
-              {embalagemSuccess}
-            </p>
-          )}
-          {!embalagemLoading && embalagemConfig !== null && (
-            <div className="overflow-x-auto rounded-lg shadow max-w-2xl">
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr style={{ backgroundColor: "#1565C0" }}>
-                    {["Tamanho", "Insumo associado", ""].map((h) => (
-                      <th
-                        key={h}
-                        className="text-left text-white font-bold px-4 py-3"
-                        style={{ fontSize: 13 }}
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {TAMANHOS.map((tamanho, idx) => (
-                    <tr key={tamanho} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
-                      <td className="px-4 py-3 font-medium text-gray-800">{tamanho}</td>
-                      <td className="px-4 py-3">
-                        <select
-                          className={inputCls}
-                          value={embalagemSelecionado[tamanho] ?? ""}
-                          onChange={(e) =>
-                            setEmbalagemSelecionado((prev) => ({ ...prev, [tamanho]: e.target.value }))
-                          }
-                        >
-                          <option value="">— Selecione —</option>
-                          {embalagemInsumos.map((i) => (
-                            <option key={i.id} value={i.id}>
-                              {i.nome} ({i.unidade})
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={() => handleSaveEmbalagem(tamanho)}
-                          disabled={!embalagemSelecionado[tamanho] || embalagemSaving === tamanho}
-                          className="px-3 py-1.5 rounded text-white text-xs font-bold hover:brightness-110 transition disabled:opacity-60"
-                          style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
-                        >
-                          {embalagemSaving === tamanho ? "Salvando..." : "Salvar"}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           )}
         </div>
       )}

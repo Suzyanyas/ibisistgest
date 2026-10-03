@@ -1,6 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/app/actions/auth-role";
+import { logAtividade } from "@/app/actions/dashboard";
 import type { Tables } from "@/types/supabase";
 
 export type ProdutoAcabadoRow = Tables<"produtos_acabados">;
@@ -35,7 +37,7 @@ export async function getProdutosAcabados(): Promise<ProdutoAcabadoWithFlag[]> {
   if (error) throw new Error(error.message);
   return (data ?? []).map((p) => ({
     ...p,
-    estoque_baixo: p.estoque_atual < p.estoque_seguranca,
+    estoque_baixo: p.estoque_atual <= p.estoque_seguranca,
   }));
 }
 
@@ -49,6 +51,7 @@ export async function createProdutoAcabado(
   estoque_20l: number
 ): Promise<void> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
   const estoque_atual = estoque_1l + estoque_2l + estoque_5l + estoque_20l;
   const { error } = await supabase.from("produtos_acabados").insert({
     nome,
@@ -61,6 +64,7 @@ export async function createProdutoAcabado(
     estoque_20l,
   });
   if (error) throw new Error(error.message);
+  await logAtividade("Novo produto acabado", nome, user?.id, user?.email);
 }
 
 export async function registrarRetirada(
@@ -71,11 +75,12 @@ export async function registrarRetirada(
   qtd_20l: number
 ): Promise<void> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
   const total = qtd_1l + qtd_2l + qtd_5l + qtd_20l;
 
   const { data: produto, error: fetchErr } = await supabase
     .from("produtos_acabados")
-    .select("estoque_atual, estoque_1l, estoque_2l, estoque_5l, estoque_20l")
+    .select("nome, estoque_atual, estoque_1l, estoque_2l, estoque_5l, estoque_20l")
     .eq("id", produto_id)
     .single();
   if (fetchErr) throw new Error(fetchErr.message);
@@ -93,10 +98,25 @@ export async function registrarRetirada(
   if (updateErr) throw new Error(updateErr.message);
 
   const today = new Date().toISOString().slice(0, 10);
-  const { error: insertErr } = await supabase
-    .from("produto_retiradas")
-    .insert({ produto_id, quantidade: total, qtd_1l, qtd_2l, qtd_5l, qtd_20l, data_retirada: today });
+  const { error: insertErr } = await supabase.from("produto_retiradas").insert({
+    produto_id,
+    quantidade: total,
+    qtd_1l,
+    qtd_2l,
+    qtd_5l,
+    qtd_20l,
+    data_retirada: today,
+    user_id: user?.id ?? null,
+    user_email: user?.email ?? null,
+  });
   if (insertErr) throw new Error(insertErr.message);
+
+  await logAtividade(
+    "Retirada de produto",
+    `${produto.nome} — ${total} UND`,
+    user?.id,
+    user?.email
+  );
 }
 
 export async function getRetiradasHoje(): Promise<RetiradasHoje[]> {

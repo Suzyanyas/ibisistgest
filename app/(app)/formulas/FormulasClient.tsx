@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, AlertTriangle, FlaskConical } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   createFormula,
@@ -40,10 +40,12 @@ function Modal({
   title,
   onClose,
   children,
+  danger,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  danger?: boolean;
 }) {
   return (
     <div
@@ -56,12 +58,15 @@ function Modal({
       >
         <div
           className="flex items-center justify-between px-6 py-4"
-          style={{ backgroundColor: "#1565C0", borderRadius: "12px 12px 0 0" }}
+          style={{ backgroundColor: danger ? "#C62828" : "#1565C0", borderRadius: "12px 12px 0 0" }}
         >
-          <h2 className="text-white font-semibold text-lg">{title}</h2>
+          <h2 className="text-white font-semibold text-lg flex items-center">
+            {danger && <AlertTriangle size={20} color="white" style={{ marginRight: 8 }} />}
+            {title}
+          </h2>
           <button
             onClick={onClose}
-            className="text-white opacity-70 hover:opacity-100 text-2xl leading-none"
+            className="modal-close text-white text-2xl leading-none"
           >
             &times;
           </button>
@@ -124,7 +129,10 @@ function ModalActions({
         onClick={onSave}
         disabled={disabled}
         className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
-        style={{ backgroundColor: saveColor ?? "#1565C0" }}
+        style={{
+          backgroundColor: saveColor ?? "#1565C0",
+          boxShadow: saveColor === "#C62828" ? "0 4px 16px rgba(198,40,40,0.4)" : undefined,
+        }}
       >
         {saveLabel}
       </button>
@@ -136,6 +144,30 @@ function ModalActions({
 
 function emptyFormulaForm() {
   return { nome: "", sigla: "", rendimento: "", rendimento_unidade: "L", obs: "" };
+}
+
+function generateSigla(nome: string): string {
+  if (!nome.trim()) return "";
+
+  const words = nome.trim().toUpperCase().split(/\s+/);
+
+  if (words.length === 1) {
+    // Single word: first letter + first consonants, max 3-4 chars
+    const word = words[0];
+    const vowels = /[AEIOUÁÉÍÓÚÀÈÌÒÙÃÕÂÊÎÔÛÜ]/;
+    let result = word[0]; // always keep first letter
+    let i = 1;
+    while (result.length < 3 && i < word.length) {
+      if (!vowels.test(word[i])) {
+        result += word[i];
+      }
+      i++;
+    }
+    return result.slice(0, 6);
+  } else {
+    // Multiple words: first letter of each word, max 6 chars
+    return words.map((w) => w[0]).join("").slice(0, 6);
+  }
 }
 
 function fromFormula(f: FormulaRow) {
@@ -171,6 +203,7 @@ export default function FormulasClient({
 
   // Formula form
   const [form, setForm] = useState(emptyFormulaForm());
+  const [siglaManuallyEdited, setSiglaManuallyEdited] = useState(false);
 
   // Add insumo form
   const [insumosList, setInsumosList] = useState<InsumoBasic[]>([]);
@@ -205,6 +238,7 @@ export default function FormulasClient({
     setModal(null);
     setModalError(null);
     setForm(emptyFormulaForm());
+    setSiglaManuallyEdited(false);
     setSelInsumoId("");
     setInsQtd("");
     setInsUnidade("KG");
@@ -459,40 +493,39 @@ export default function FormulasClient({
     <div className="flex" style={{ minHeight: "calc(100vh - 64px)" }}>
       {/* ── Sidebar ── */}
       <aside
-        className={`flex-shrink-0 flex-col border-r border-gray-200 bg-white md:flex ${mobileSidebarOpen ? "flex" : "hidden"}`}
-        style={{ width: 220 }}
+        className={`flex-shrink-0 flex-col border-r-2 md:flex relative z-10 ${mobileSidebarOpen ? "flex" : "hidden"}`}
+        style={{ width: 220, background: "linear-gradient(180deg, #F8FAFF 0%, #EEF4FF 100%)", borderRightColor: "#E0EAFF" }}
       >
         <div
-          className="flex items-center justify-between px-4 py-4 border-b border-blue-200"
-          style={{ backgroundColor: "#1565C0" }}
+          className="flex items-center justify-between px-4 py-4"
+          style={{ borderBottom: "1px solid #E0EAFF" }}
         >
-          <span className="text-white" style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 16, fontWeight: 600 }}>Fórmulas</span>
-          {isAdmin && (
-            <button
-              onClick={openNova}
-              style={{
-                width: "32px",
-                height: "32px",
-                minWidth: "32px",
-                minHeight: "32px",
-                borderRadius: "50%",
-                border: "none",
-                background: "white",
-                color: "#1565C0",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "20px",
-                fontWeight: "700",
-                cursor: "pointer",
-                flexShrink: 0,
-                boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
-              }}
-              title="Nova Fórmula"
-            >
-              +
-            </button>
-          )}
+          <span style={{ fontFamily: "var(--font-lora), Georgia, serif", fontSize: 18, fontWeight: 700, color: "#1A3A6B" }}>Fórmulas</span>
+          <button
+            onClick={openNova}
+            className="btn-icon"
+            style={{
+              width: "32px",
+              height: "32px",
+              minWidth: "32px",
+              minHeight: "32px",
+              borderRadius: "50%",
+              border: "none",
+              background: "#1565C0",
+              color: "white",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "20px",
+              fontWeight: "700",
+              cursor: "pointer",
+              flexShrink: 0,
+              boxShadow: "0 2px 6px rgba(21,101,192,0.3)",
+            }}
+            title="Nova Fórmula"
+          >
+            +
+          </button>
         </div>
         <ul className="flex-1 overflow-y-auto py-2">
           {formulas.length === 0 && (
@@ -506,13 +539,16 @@ export default function FormulasClient({
               <li key={f.id}>
                 <button
                   onClick={() => selectFormula(f.id)}
-                  className="w-full text-left text-sm transition"
+                  className="sidebar-item sidebar-nav-premium w-full text-left text-sm transition"
                   style={{
-                    backgroundColor: isActive ? "#1565C0" : "transparent",
-                    color: isActive ? "#ffffff" : "#1A3A6B",
+                    background: isActive
+                      ? "linear-gradient(90deg, rgba(21,101,192,0.12) 0%, rgba(21,101,192,0.04) 100%)"
+                      : "transparent",
+                    borderLeft: isActive ? "3px solid #1565C0" : "3px solid transparent",
+                    color: isActive ? "#1565C0" : "#1A3A6B",
                     borderRadius: 8,
                     padding: "12px 16px",
-                    fontWeight: isActive ? 600 : 400,
+                    fontWeight: isActive ? 700 : 400,
                     margin: "0 4px",
                     width: "calc(100% - 8px)",
                     cursor: "pointer",
@@ -520,7 +556,7 @@ export default function FormulasClient({
                 >
                   {f.nome}
                   {isActive && (
-                    <span className="ml-2 text-blue-200 text-xs">{f.sigla}</span>
+                    <span className="ml-2 text-xs" style={{ color: "#1565C0" }}>{f.sigla}</span>
                   )}
                 </button>
               </li>
@@ -530,18 +566,25 @@ export default function FormulasClient({
       </aside>
 
       {/* ── Main panel ── */}
-      <main className={`flex-1 overflow-y-auto bg-white md:block ${!mobileSidebarOpen ? "block" : "hidden"}`} style={{ padding: 24 }}>
+      <main
+        className={`flex-1 overflow-y-auto md:block ${!mobileSidebarOpen ? "block" : "hidden"}`}
+        style={{ padding: 24, background: "linear-gradient(180deg, #F8FAFF 0%, #FFFFFF 80px)" }}
+      >
         <button
           onClick={() => setMobileSidebarOpen(true)}
-          className="mb-4 flex items-center gap-1 text-sm font-semibold md:hidden"
+          className="mb-4 flex items-center gap-1 text-sm font-semibold md:hidden hover:bg-gray-100 transition-all active:scale-95"
           style={{ color: "#1565C0", cursor: "pointer" }}
         >
           ← Fórmulas
         </button>
         {!selectedId && !detailLoading && (
-          <div className="flex items-center justify-center h-full min-h-[300px]">
-            <p className="text-gray-400 text-base">
-              Selecione uma fórmula para ver os detalhes
+          <div className="flex flex-col items-center justify-center h-full min-h-[300px] gap-2">
+            <FlaskConical size={48} color="#E0EAFF" />
+            <p style={{ fontSize: 16, color: "#9CA3AF" }}>
+              Selecione uma fórmula
+            </p>
+            <p style={{ fontSize: 13, color: "#C4C4C4" }}>
+              ou crie uma nova fórmula
             </p>
           </div>
         )}
@@ -561,54 +604,67 @@ export default function FormulasClient({
         {detail && !detailLoading && (
           <div className="max-w-3xl">
             {/* Panel header */}
-            <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
+            <div
+              className="flex items-start justify-between gap-4 flex-wrap"
+              style={{ paddingBottom: 16, borderBottom: "1px solid #E8F4FF", marginBottom: 20 }}
+            >
               <div>
                 <div className="flex items-center gap-3">
-                  <h2 className="text-2xl font-bold" style={{ color: "#1A3A6B" }}>
+                  <h2 style={{ fontSize: 26, fontWeight: 700, color: "#1A3A6B", fontFamily: "var(--font-lora), Georgia, serif" }}>
                     {detail.nome}
                   </h2>
                   <span
-                    className="px-2 py-0.5 rounded text-xs font-bold tracking-wider"
-                    style={{ backgroundColor: "#E3F2FD", color: "#1565C0" }}
+                    style={{
+                      backgroundColor: "#E8F4FF",
+                      color: "#1565C0",
+                      borderRadius: 8,
+                      padding: "3px 10px",
+                      fontSize: 13,
+                      fontWeight: 700,
+                    }}
                   >
                     {detail.sigla}
                   </span>
                 </div>
-                <p className="text-sm text-gray-600 mt-1">
+                <p style={{ fontSize: 14, color: "#6B7A99", marginTop: 4 }}>
                   Rendimento:{" "}
                   <strong>
                     {detail.rendimento} {detail.rendimento_unidade}
                   </strong>
                 </p>
                 {detail.obs && (
-                  <p className="text-sm text-gray-500 mt-1 italic">{detail.obs}</p>
+                  <p style={{ fontSize: 13, color: "#9CA3AF", fontStyle: "italic", marginTop: 4 }}>{detail.obs}</p>
                 )}
               </div>
               <div className="flex gap-2 flex-shrink-0">
-                {isAdmin && (
-                  <button
-                    onClick={openEditar}
-                    className="px-3 py-1.5 rounded border border-blue-300 text-sm font-semibold hover:bg-blue-50 transition"
-                    style={{ color: "#1565C0" }}
-                  >
-                    Editar Fórmula
-                  </button>
-                )}
-                {isAdmin && (
-                  <button
-                    onClick={openExcluir}
-                    className="px-3 py-1.5 rounded border border-red-300 text-sm font-semibold hover:bg-red-50 transition"
-                    style={{ color: "#C62828" }}
-                  >
-                    Excluir Fórmula
-                  </button>
-                )}
+                <button
+                  onClick={openEditar}
+                  className="px-3 py-1.5 rounded border border-blue-300 text-sm font-semibold hover:bg-blue-50 transition"
+                  style={{ color: "#1565C0" }}
+                >
+                  Editar Fórmula
+                </button>
+                <button
+                  onClick={openExcluir}
+                  className="px-3 py-1.5 rounded border border-red-300 text-sm font-semibold hover:bg-red-50 transition"
+                  style={{ color: "#C62828" }}
+                >
+                  Excluir Fórmula
+                </button>
               </div>
             </div>
 
             {/* Insumos table */}
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="font-semibold text-base" style={{ color: "#1A3A6B" }}>
+            <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+              <h3
+                style={{
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: "#1A3A6B",
+                  borderLeft: "3px solid #00BCD4",
+                  paddingLeft: 8,
+                }}
+              >
                 Insumos
               </h3>
             </div>
@@ -616,12 +672,21 @@ export default function FormulasClient({
             <div className="overflow-x-auto rounded-lg shadow mb-4">
               <table className="w-full text-sm border-collapse">
                 <thead>
-                  <tr style={{ backgroundColor: "#1565C0" }}>
-                    {["Insumo", "Quantidade", "Unidade"].map((h) => (
-                      <th key={h} className="text-left text-white font-bold px-4 py-4" style={{ fontSize: 13 }}>
-                        {h}
-                      </th>
-                    ))}
+                  <tr
+                    style={{
+                      background: "linear-gradient(135deg, #1565C0 0%, #1976D2 100%)",
+                      boxShadow: "0 2px 8px rgba(21,101,192,0.2)",
+                    }}
+                  >
+                    <th className="text-left text-white font-bold px-4 py-4" style={{ fontSize: 13 }}>
+                      Insumo
+                    </th>
+                    <th className="text-right text-white font-bold px-4 py-4" style={{ fontSize: 13 }}>
+                      Quantidade
+                    </th>
+                    <th className="text-left text-white font-bold px-4 py-4" style={{ fontSize: 13 }}>
+                      Unidade
+                    </th>
                     {isAdmin && (
                       <>
                         <th className="text-left text-white font-bold px-4 py-4" style={{ fontSize: 13 }}>
@@ -644,7 +709,7 @@ export default function FormulasClient({
                 </thead>
                 <tbody>
                   {detail.formula_insumos.length === 0 && (
-                    <tr>
+                    <tr className="table-row-hover">
                       <td colSpan={isAdmin ? 6 : 4} className="text-center py-8 text-gray-400">
                         Nenhum insumo adicionado.
                       </td>
@@ -657,9 +722,9 @@ export default function FormulasClient({
                     const custoTotal = qtdConvertida * custoUnit;
                     const isEditingThis = editingCustoId === fi.id;
                     return (
-                      <tr key={fi.id} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
+                      <tr key={fi.id} className="table-row-hover" style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
                         <td className="px-4 py-4 font-medium text-gray-800">{fi.insumos?.nome ?? "—"}</td>
-                        <td className="px-4 py-4 text-gray-700">{fi.quantidade}</td>
+                        <td className="px-4 py-4 text-right text-gray-700">{fi.quantidade}</td>
                         <td className="px-4 py-4 text-gray-700">{fi.unidade}</td>
                         {isAdmin && (
                           <>
@@ -685,7 +750,7 @@ export default function FormulasClient({
                                   <button
                                     onClick={() => handleSaveCusto(fi.insumo_id)}
                                     disabled={custoSaving}
-                                    className="w-6 h-6 flex items-center justify-center rounded text-white text-xs font-bold disabled:opacity-60"
+                                    className="w-6 h-6 flex items-center justify-center rounded text-white text-xs font-bold disabled:opacity-60 hover:scale-110 transition-transform active:scale-95"
                                     style={{ backgroundColor: "#16A34A" }}
                                     title="Salvar"
                                   >
@@ -693,7 +758,7 @@ export default function FormulasClient({
                                   </button>
                                   <button
                                     onClick={() => { setEditingCustoId(null); setCustoError(null); }}
-                                    className="w-6 h-6 flex items-center justify-center rounded text-xs font-bold border border-gray-300 text-gray-600"
+                                    className="w-6 h-6 flex items-center justify-center rounded text-xs font-bold border border-gray-300 text-gray-600 hover:scale-110 transition-transform active:scale-95"
                                     title="Cancelar"
                                   >
                                     ✗
@@ -728,40 +793,37 @@ export default function FormulasClient({
                         )}
                         <td className="px-4 py-4">
                           <div className="flex gap-2 items-center">
-                            {isAdmin && (
-                              <button
-                                onClick={() => openEditInsumo(fi)}
-                                className="px-2 py-1 rounded text-white text-xs font-semibold hover:brightness-110 transition"
-                                style={{ backgroundColor: "#1565C0" }}
-                                title="Editar insumo"
-                              >
-                                Editar
-                              </button>
-                            )}
-                            {isAdmin && (
-                              <button
-                                onClick={() => openRemoveInsumo(fi)}
-                                title="Remover insumo"
-                                style={{
-                                  width: '32px',
-                                  height: '32px',
-                                  minWidth: '32px',
-                                  minHeight: '32px',
-                                  borderRadius: '50%',
-                                  backgroundColor: '#C62828',
-                                  color: 'white',
-                                  border: 'none',
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  padding: '0',
-                                  flexShrink: 0,
-                                }}
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            )}
+                            <button
+                              onClick={() => openEditInsumo(fi)}
+                              className="px-2 py-1 rounded text-white text-xs font-semibold hover:brightness-110 transition"
+                              style={{ backgroundColor: "#1565C0" }}
+                              title="Editar insumo"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => openRemoveInsumo(fi)}
+                              title="Remover insumo"
+                              className="btn-icon"
+                              style={{
+                                width: '32px',
+                                height: '32px',
+                                minWidth: '32px',
+                                minHeight: '32px',
+                                borderRadius: '50%',
+                                backgroundColor: '#C62828',
+                                color: 'white',
+                                border: 'none',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '0',
+                                flexShrink: 0,
+                              }}
+                            >
+                              <Trash2 size={16} />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -775,11 +837,11 @@ export default function FormulasClient({
                       return sum + qtdConvertida * custoUnit;
                     }, 0);
                     return (
-                      <tr style={{ backgroundColor: "#E8F4FF", borderTop: "2px solid #1565C0" }}>
-                        <td colSpan={4} className="px-4 py-3 font-bold text-sm" style={{ color: "#1A3A6B" }}>
+                      <tr className="table-row-hover" style={{ backgroundColor: "#E8F4FF", borderTop: "2px solid #1565C0" }}>
+                        <td colSpan={4} className="px-4 py-3" style={{ fontWeight: 700, fontSize: 15, color: "#1A3A6B" }}>
                           CUSTO TOTAL DE PRODUÇÃO
                         </td>
-                        <td className="px-4 py-3 font-bold text-sm" style={{ color: "#1A3A6B" }}>
+                        <td className="px-4 py-3" style={{ fontWeight: 700, fontSize: 15, color: "#1A3A6B" }}>
                           R$ {totalCusto.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                         </td>
                         <td />
@@ -793,15 +855,13 @@ export default function FormulasClient({
               <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mb-3">{custoError}</p>
             )}
 
-            {isAdmin && (
-              <button
-                onClick={openAddInsumo}
-                className="px-4 py-2 rounded text-white text-sm font-semibold shadow hover:brightness-110 transition"
-                style={{ backgroundColor: "#1565C0" }}
-              >
-                + Adicionar Insumo
-              </button>
-            )}
+            <button
+              onClick={openAddInsumo}
+              className="px-4 py-2 rounded text-white text-sm font-semibold shadow hover:brightness-110 transition"
+              style={{ backgroundColor: "#1565C0" }}
+            >
+              + Adicionar Insumo
+            </button>
           </div>
         )}
       </main>
@@ -809,7 +869,13 @@ export default function FormulasClient({
       {/* ── Modal: Nova Fórmula ── */}
       {modal === "nova" && (
         <Modal title="Nova Fórmula" onClose={closeModal}>
-          <FormulaFormFields form={form} setForm={setForm} />
+          <FormulaFormFields
+            form={form}
+            setForm={setForm}
+            autoSigla
+            siglaManuallyEdited={siglaManuallyEdited}
+            setSiglaManuallyEdited={setSiglaManuallyEdited}
+          />
           <div className="mt-4 flex flex-col gap-3">
             <ErrorMsg msg={modalError} />
             <ModalActions
@@ -965,9 +1031,9 @@ export default function FormulasClient({
 
       {/* ── Modal: Remover Insumo da Fórmula ── */}
       {modal === "removeInsumo" && targetInsumo && (
-        <Modal title="Remover Insumo da Fórmula" onClose={closeModal}>
+        <Modal title="Remover Insumo da Fórmula" onClose={closeModal} danger>
           <div className="flex flex-col gap-4">
-            <p className="text-sm text-gray-700">
+            <p style={{ fontSize: 15, color: "#1A1A1A", fontWeight: 500 }}>
               Tem certeza que deseja remover{" "}
               <strong>{targetInsumo.insumos?.nome ?? "este insumo"}</strong> da
               fórmula?
@@ -975,6 +1041,7 @@ export default function FormulasClient({
             <Field label="PIN de confirmação">
               <input
                 className={inputCls}
+                style={{ border: "2px solid #E53935" }}
                 type="password"
                 maxLength={4}
                 value={pin}
@@ -1006,20 +1073,20 @@ export default function FormulasClient({
           <div className="bg-white rounded-lg shadow-2xl w-full max-w-sm">
             <div className="px-6 py-5 flex flex-col gap-4">
               <div className="flex items-start gap-3">
-                <span
-                  className="text-3xl flex-shrink-0 mt-0.5"
+                <AlertTriangle
+                  size={28}
+                  color="#C62828"
+                  className="flex-shrink-0 mt-0.5"
                   aria-hidden="true"
-                >
-                  ⚠️
-                </span>
+                />
                 <div>
                   <h2
                     className="font-bold text-lg mb-1"
                     style={{ color: "#B71C1C" }}
                   >
-                    Excluir Fórmula
+                    Confirmar Exclusão
                   </h2>
-                  <p className="text-sm text-gray-700">
+                  <p style={{ fontSize: 15, color: "#1A1A1A", fontWeight: 500 }}>
                     Tem certeza que deseja excluir a fórmula{" "}
                     <strong>{detail.nome}</strong>? Esta ação não pode ser
                     desfeita.
@@ -1038,7 +1105,7 @@ export default function FormulasClient({
                   onClick={handleDelete}
                   disabled={isPending}
                   className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
-                  style={{ backgroundColor: "#C62828" }}
+                  style={{ backgroundColor: "#C62828", boxShadow: "0 4px 16px rgba(198,40,40,0.4)" }}
                 >
                   {isPending ? "Excluindo..." : "EXCLUIR"}
                 </button>
@@ -1064,12 +1131,31 @@ type FormState = {
 function FormulaFormFields({
   form,
   setForm,
+  autoSigla,
+  siglaManuallyEdited,
+  setSiglaManuallyEdited,
 }: {
   form: FormState;
   setForm: React.Dispatch<React.SetStateAction<FormState>>;
+  autoSigla?: boolean;
+  siglaManuallyEdited?: boolean;
+  setSiglaManuallyEdited?: (value: boolean) => void;
 }) {
   function set(key: keyof FormState, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function handleNomeChange(value: string) {
+    setForm((prev) => {
+      const next = { ...prev, nome: value };
+      if (autoSigla && !siglaManuallyEdited) {
+        next.sigla = generateSigla(value);
+      }
+      return next;
+    });
+    if (autoSigla && !value.trim()) {
+      setSiglaManuallyEdited?.(false);
+    }
   }
 
   return (
@@ -1078,7 +1164,7 @@ function FormulaFormFields({
         <input
           className={inputCls}
           value={form.nome}
-          onChange={(e) => set("nome", e.target.value)}
+          onChange={(e) => handleNomeChange(e.target.value)}
           placeholder="Nome da fórmula"
         />
       </Field>
@@ -1086,7 +1172,10 @@ function FormulaFormFields({
         <input
           className={inputCls}
           value={form.sigla}
-          onChange={(e) => set("sigla", e.target.value.toUpperCase().slice(0, 6))}
+          onChange={(e) => {
+            set("sigla", e.target.value.toUpperCase().slice(0, 6));
+            if (autoSigla) setSiglaManuallyEdited?.(true);
+          }}
           placeholder="Ex: DET01"
           maxLength={6}
         />

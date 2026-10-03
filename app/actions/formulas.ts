@@ -1,6 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/app/actions/auth-role";
+import { logAtividade } from "@/app/actions/dashboard";
 import type { Tables } from "@/types/supabase";
 
 export type FormulaRow = Tables<"formulas">;
@@ -46,12 +48,14 @@ export async function createFormula(payload: {
   obs?: string | null;
 }): Promise<FormulaRow> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
   const { data, error } = await supabase
     .from("formulas")
     .insert(payload)
     .select()
     .single();
   if (error) throw new Error(error.message);
+  await logAtividade("Nova fórmula", payload.nome, user?.id, user?.email);
   return data;
 }
 
@@ -75,6 +79,15 @@ export async function updateFormula(
 
 export async function deleteFormula(id: string): Promise<void> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
+
+  const { data: formula } = await supabase
+    .from("formulas")
+    .select("nome")
+    .eq("id", id)
+    .single();
+  await logAtividade("Exclusão de fórmula", formula?.nome ?? "—", user?.id, user?.email);
+
   // Delete children first in case there's no CASCADE
   const { error: childError } = await supabase
     .from("formula_insumos")

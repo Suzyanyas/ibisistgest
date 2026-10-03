@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { History } from "lucide-react";
+import { History, Search } from "lucide-react";
 import {
   getProdutosAcabados,
   createProdutoAcabado,
@@ -52,7 +52,7 @@ function Modal({
           <h2 className="text-white font-semibold text-lg">{title}</h2>
           <button
             onClick={onClose}
-            className="text-white opacity-70 hover:opacity-100 text-2xl leading-none"
+            className="modal-close text-white text-2xl leading-none"
           >
             &times;
           </button>
@@ -113,6 +113,13 @@ export default function ProdutoAcabadoClient({
     useState<ProdutoAcabadoWithFlag[]>(initialProdutos);
   const [retiradasHoje, setRetiradasHoje] =
     useState<RetiradasHoje[]>(initialRetiradasHoje);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const normalize = (str: string) =>
+    str.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const filteredProdutos = produtos.filter((p) =>
+    normalize(p.nome).includes(normalize(searchQuery))
+  );
 
   const [modal, setModal] = useState<ModalType>(null);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -407,13 +414,53 @@ export default function ProdutoAcabadoClient({
         </div>
       </div>
 
+      {/* Search */}
+      <div className="mb-4 relative bg-white shadow-sm rounded-lg">
+        <Search
+          size={16}
+          color="#9CA3AF"
+          style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }}
+        />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Pesquisar produto..."
+          className="w-full rounded-lg border border-gray-200 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+          style={{ paddingLeft: 36, paddingRight: searchQuery ? 36 : 16 }}
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery("")}
+            aria-label="Limpar pesquisa"
+            className="text-gray-400 hover:text-gray-600"
+            style={{
+              position: "absolute",
+              right: 12,
+              top: "50%",
+              transform: "translateY(-50%)",
+              cursor: "pointer",
+              fontSize: 18,
+              lineHeight: 1,
+              background: "none",
+              border: "none",
+            }}
+          >
+            &times;
+          </button>
+        )}
+      </div>
+
       {/* Table */}
       <div className="overflow-x-auto overflow-y-auto rounded-lg shadow max-h-[calc(100vh-200px)]">
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr
               className="sticky top-0 z-10"
-              style={{ backgroundColor: "#1565C0" }}
+              style={{
+                background: "linear-gradient(135deg, #1565C0 0%, #1976D2 100%)",
+                boxShadow: "0 2px 8px rgba(21,101,192,0.2)",
+              }}
             >
               {[
                 "Produto Acabado",
@@ -428,7 +475,11 @@ export default function ProdutoAcabadoClient({
                 <th
                   key={h}
                   className="text-left text-white font-bold px-4 py-4"
-                  style={{ fontSize: 13 }}
+                  style={{
+                    fontSize: 13,
+                    letterSpacing: "0.08em",
+                    textAlign: h === "Produto Acabado" || h === "Retirada" ? "left" : "right",
+                  }}
                 >
                   {h}
                 </th>
@@ -436,17 +487,19 @@ export default function ProdutoAcabadoClient({
             </tr>
           </thead>
           <tbody>
-            {produtos.length === 0 && (
-              <tr>
+            {filteredProdutos.length === 0 && (
+              <tr className="table-row-hover">
                 <td
                   colSpan={8}
                   className="text-center py-10 text-gray-400"
                 >
-                  Nenhum produto cadastrado.
+                  {searchQuery
+                    ? `Nenhum produto encontrado para '${searchQuery}'`
+                    : "Nenhum produto cadastrado."}
                 </td>
               </tr>
             )}
-            {produtos.map((p, idx) => {
+            {filteredProdutos.map((p, idx) => {
               const qtdHoje = retiradasMap[p.id] ?? 0;
               const rowBg = p.estoque_baixo
                 ? "#FFF3CD"
@@ -455,13 +508,28 @@ export default function ProdutoAcabadoClient({
                 : "#ffffff";
 
               return (
-                <tr key={p.id} style={{ backgroundColor: rowBg }}>
+                <tr
+                  key={p.id}
+                  className="table-row-hover"
+                  style={{
+                    backgroundColor: rowBg,
+                    ...(p.estoque_baixo ? { borderLeft: "3px solid #F59E0B" } : {}),
+                  }}
+                >
                   <td className="px-4 py-4">
                     <div className="flex items-center gap-2">
                       <span
-                        className="flex-shrink-0"
-                        style={{ color: "#1565C0", fontSize: 16, lineHeight: 1 }}
-                      >●</span>
+                        style={{
+                          display: "inline-block",
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          backgroundColor: p.estoque_baixo ? "#F59E0B" : "#1565C0",
+                          marginRight: 8,
+                          flexShrink: 0,
+                          verticalAlign: "middle",
+                        }}
+                      />
                       <button
                         onClick={() => openHistorico(p.nome)}
                         title="Ver histórico de lotes"
@@ -473,28 +541,36 @@ export default function ProdutoAcabadoClient({
                       </button>
                     </div>
                   </td>
-                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14 }}>
+                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14, textAlign: "right" }}>
                     {p.estoque_1l ?? 0}
                   </td>
-                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14 }}>
+                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14, textAlign: "right" }}>
                     {p.estoque_2l ?? 0}
                   </td>
-                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14 }}>
+                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14, textAlign: "right" }}>
                     {p.estoque_5l ?? 0}
                   </td>
-                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14 }}>
+                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14, textAlign: "right" }}>
                     {p.estoque_20l ?? 0}
                   </td>
-                  <td className="px-4 py-4 font-semibold" style={{ fontSize: 14, color: "#1565C0" }}>
+                  <td
+                    className="px-4 py-4 font-semibold"
+                    style={{
+                      fontSize: 14,
+                      textAlign: "right",
+                      fontWeight: p.estoque_baixo ? 700 : 600,
+                      color: p.estoque_baixo ? "#D97706" : "#1565C0",
+                    }}
+                  >
                     {p.estoque_atual}
                   </td>
-                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14 }}>
+                  <td className="px-4 py-4 text-gray-700" style={{ fontSize: 14, textAlign: "right" }}>
                     {p.estoque_seguranca}
                   </td>
                   <td className="px-4 py-4">
                     <button
                       onClick={() => openRetirada(p)}
-                      className="text-sm font-bold transition"
+                      className="text-sm font-bold transition hover:shadow-md hover:scale-105 transition-all active:scale-95"
                       style={
                         qtdHoje > 0
                           ? {
@@ -519,7 +595,10 @@ export default function ProdutoAcabadoClient({
                       }
                     >
                       {qtdHoje > 0 ? (
-                        <strong>{qtdHoje} UND</strong>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="animate-pulse" style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", backgroundColor: "#4ADE80" }} />
+                          <strong>{qtdHoje} UND</strong>
+                        </span>
                       ) : (
                         "Registrar"
                       )}
@@ -699,6 +778,7 @@ export default function ProdutoAcabadoClient({
                     type="button"
                     onClick={() => s.set(Math.min(s.max, s.value + 1))}
                     disabled={s.value >= s.max}
+                    className="btn-icon"
                     style={{
                       width: "32px", height: "32px", minWidth: "32px", minHeight: "32px",
                       borderRadius: "50%", border: "none", background: "white", color: "#1565C0",
@@ -782,7 +862,7 @@ export default function ProdutoAcabadoClient({
                       {historicoProduto.map((item, idx) => {
                         const env = item.envases[0];
                         return (
-                          <tr key={item.id} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
+                          <tr key={item.id} className="table-row-hover" style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
                             <td className="px-3 py-2 text-gray-700 font-medium">{item.numero_lote}</td>
                             <td className="px-3 py-2 text-gray-700" style={{ whiteSpace: "nowrap" }}>{formatDataEnvase(env?.data_envase)}</td>
                             <td className="px-3 py-2 text-gray-700">{env?.qtd_1l ?? 0}</td>

@@ -1,6 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/app/actions/auth-role";
+import { logAtividade } from "@/app/actions/dashboard";
 import type { Tables } from "@/types/supabase";
 
 export type LoteRow = Tables<"lotes_producao">;
@@ -57,9 +59,18 @@ export async function createLote(
   fragancia?: string
 ): Promise<LoteRow> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
   const { data, error } = await supabase
     .from("lotes_producao")
-    .insert({ formula_id, numero_lote, data_producao, status: "producao", fragancia: fragancia || null })
+    .insert({
+      formula_id,
+      numero_lote,
+      data_producao,
+      status: "producao",
+      fragancia: fragancia || null,
+      user_id: user?.id ?? null,
+      user_email: user?.email ?? null,
+    })
     .select()
     .single();
   if (error) throw new Error(error.message);
@@ -94,6 +105,18 @@ export async function createLote(
       .insert(inserts);
     if (insertError) throw new Error(insertError.message);
   }
+
+  const { data: formula } = await supabase
+    .from("formulas")
+    .select("nome")
+    .eq("id", formula_id)
+    .single();
+  await logAtividade(
+    "Novo lote",
+    `${numero_lote} — ${formula?.nome ?? "—"}`,
+    user?.id,
+    user?.email
+  );
 
   return lote;
 }
@@ -141,6 +164,7 @@ export async function updateLoteStatus(
   status: "producao" | "envase" | "concluido"
 ): Promise<void> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
   const { error } = await supabase
     .from("lotes_producao")
     .update({ status })
@@ -154,6 +178,8 @@ export async function updateLoteStatus(
       .eq("id", id)
       .single();
     if (loteError) throw new Error(loteError.message);
+
+    await logAtividade("Lote para envase", lote.numero_lote, user?.id, user?.email);
 
     const { data: loteInsumos, error: liError } = await supabase
       .from("lote_insumos")
@@ -193,6 +219,15 @@ export async function updateLoteStatus(
         if (movError) throw new Error(movError.message);
       }
     }
+  } else if (status === "concluido") {
+    const { data: lote, error: loteError } = await supabase
+      .from("lotes_producao")
+      .select("numero_lote")
+      .eq("id", id)
+      .single();
+    if (loteError) throw new Error(loteError.message);
+
+    await logAtividade("Lote concluído", lote.numero_lote, user?.id, user?.email);
   }
 }
 

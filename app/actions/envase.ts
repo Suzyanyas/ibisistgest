@@ -1,6 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/app/actions/auth-role";
+import { logAtividade } from "@/app/actions/dashboard";
 import type { Tables } from "@/types/supabase";
 
 export type EnvaseRow = Tables<"envases">;
@@ -77,6 +79,7 @@ export async function saveEnvase(
   data_envase: string
 ): Promise<void> {
   const supabase = await createClient();
+  const user = await getCurrentUser();
   // datetime-local returns "YYYY-MM-DDTHH:mm" without timezone; treat as local and convert to ISO
   const data_envase_iso = new Date(data_envase).toISOString();
   const rendimento_real = qtd_1l * 1 + qtd_2l * 2 + qtd_5l * 5 + qtd_20l * 20;
@@ -84,13 +87,30 @@ export async function saveEnvase(
   if (existing) {
     const { error } = await supabase
       .from("envases")
-      .update({ qtd_1l, qtd_2l, qtd_5l, qtd_20l, data_envase: data_envase_iso, rendimento_real })
+      .update({
+        qtd_1l,
+        qtd_2l,
+        qtd_5l,
+        qtd_20l,
+        data_envase: data_envase_iso,
+        rendimento_real,
+        user_id: user?.id ?? null,
+        user_email: user?.email ?? null,
+      })
       .eq("id", existing.id);
     if (error) throw new Error(error.message);
   } else {
-    const { error } = await supabase
-      .from("envases")
-      .insert({ lote_id, qtd_1l, qtd_2l, qtd_5l, qtd_20l, data_envase: data_envase_iso, rendimento_real });
+    const { error } = await supabase.from("envases").insert({
+      lote_id,
+      qtd_1l,
+      qtd_2l,
+      qtd_5l,
+      qtd_20l,
+      data_envase: data_envase_iso,
+      rendimento_real,
+      user_id: user?.id ?? null,
+      user_email: user?.email ?? null,
+    });
     if (error) throw new Error(error.message);
   }
 }
@@ -183,8 +203,84 @@ export async function saveEmbalagemConfig(
   }
 }
 
-export async function concluirEnvase(lote_id: string): Promise<void> {
+export type InsumoEmbalagemItem = {
+  id: string;
+  nome: string;
+  unidade: string;
+  estoque_atual: number;
+};
+
+export type EmbalagensDisponiveisEnvase = {
+  garrafa_1l: InsumoEmbalagemItem[];
+  garrafa_2l: InsumoEmbalagemItem[];
+  garrafa_5l: InsumoEmbalagemItem[];
+  garrafa_20l: InsumoEmbalagemItem[];
+  tampa: InsumoEmbalagemItem[];
+  alca: InsumoEmbalagemItem[];
+};
+
+const CATEGORIAS_EMBALAGEM_ENVASE = [
+  "garrafa_1l",
+  "garrafa_2l",
+  "garrafa_5l",
+  "garrafa_20l",
+  "garrafa_200ml",
+  "garrafa_500ml",
+  "tampa",
+  "alca",
+] as const;
+
+export async function getEmbalagensDisponiveisEnvase(): Promise<EmbalagensDisponiveisEnvase> {
   const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("insumos")
+    .select("id, nome, unidade, estoque_atual, categoria")
+    .in("categoria", CATEGORIAS_EMBALAGEM_ENVASE)
+    .order("nome");
+  if (error) throw new Error(error.message);
+
+  const result: EmbalagensDisponiveisEnvase = {
+    garrafa_1l: [],
+    garrafa_2l: [],
+    garrafa_5l: [],
+    garrafa_20l: [],
+    tampa: [],
+    alca: [],
+  };
+
+  for (const row of data ?? []) {
+    const categoria = row.categoria;
+    const item: InsumoEmbalagemItem = {
+      id: row.id,
+      nome: row.nome,
+      unidade: row.unidade,
+      estoque_atual: row.estoque_atual,
+    };
+    if (categoria === "garrafa_1l") result.garrafa_1l.push(item);
+    else if (categoria === "garrafa_2l") result.garrafa_2l.push(item);
+    else if (categoria === "garrafa_5l") result.garrafa_5l.push(item);
+    else if (categoria === "garrafa_20l") result.garrafa_20l.push(item);
+    else if (categoria === "tampa") result.tampa.push(item);
+    else if (categoria === "alca") result.alca.push(item);
+  }
+
+  return result;
+}
+
+export type EmbalagemSelecoes = {
+  [tamanho: string]: {
+    garrafa_id?: string | null;
+    tampa_id?: string | null;
+    alca_id?: string | null;
+  };
+};
+
+export async function concluirEnvase(
+  lote_id: string,
+  embalagemSelecoes?: EmbalagemSelecoes
+): Promise<void> {
+  const supabase = await createClient();
+  const user = await getCurrentUser();
   const { error } = await supabase
     .from("lotes_producao")
     .update({ status: "concluido" })
@@ -238,8 +334,50 @@ export async function concluirEnvase(lote_id: string): Promise<void> {
       quantidade: qtd,
       data: new Date().toISOString().slice(0, 10),
       obs: `Envase lote ${lote.numero_lote}`,
+      user_id: user?.id ?? null,
+      user_email: user?.email ?? null,
     });
     if (movError) throw new Error(movError.message);
+  }
+
+  if (embalagemSelecoes) {
+    for (const [tamanho, selecao] of Object.entries(embalagemSelecoes)) {
+      const qtd = qtdPorTamanho[tamanho] ?? 0;
+      if (qtd <= 0) continue;
+
+      const insumoIds = [
+        selecao.garrafa_id,
+        selecao.tampa_id,
+        selecao.alca_id,
+      ].filter((id): id is string => !!id);
+
+      for (const insumo_id of insumoIds) {
+        const { data: insumo, error: insumoError } = await supabase
+          .from("insumos")
+          .select("estoque_atual")
+          .eq("id", insumo_id)
+          .single();
+        if (insumoError) throw new Error(insumoError.message);
+
+        const novoEstoque = Math.max(0, (insumo.estoque_atual ?? 0) - qtd);
+        const { error: updateEstoqueError } = await supabase
+          .from("insumos")
+          .update({ estoque_atual: novoEstoque })
+          .eq("id", insumo_id);
+        if (updateEstoqueError) throw new Error(updateEstoqueError.message);
+
+        const { error: movError } = await supabase.from("insumo_movimentos").insert({
+          insumo_id,
+          tipo: "saida",
+          quantidade: qtd,
+          data: new Date().toISOString().slice(0, 10),
+          obs: `Embalagem envase lote ${lote.numero_lote}`,
+          user_id: user?.id ?? null,
+          user_email: user?.email ?? null,
+        });
+        if (movError) throw new Error(movError.message);
+      }
+    }
   }
 
   const total =
@@ -247,6 +385,14 @@ export async function concluirEnvase(lote_id: string): Promise<void> {
     (envase.qtd_2l ?? 0) +
     (envase.qtd_5l ?? 0) +
     (envase.qtd_20l ?? 0);
+
+  await logAtividade(
+    "Envase concluído",
+    `${lote.numero_lote} — ${total} UND`,
+    user?.id,
+    user?.email
+  );
+
   if (total === 0) return;
 
   const { data: formula, error: formulaError } = await supabase

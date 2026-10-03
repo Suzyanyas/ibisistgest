@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { Menu, X, LogOut } from "lucide-react";
 import { logout } from "@/app/actions/auth";
 
 const navLinks = [
@@ -20,13 +21,20 @@ export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <nav style={{ backgroundColor: "#1565C0" }} className="w-full shadow-md border-b border-blue-700">
+    <nav
+      style={{
+        backgroundColor: "#1565C0",
+        boxShadow: "0 4px 20px rgba(21,101,192,0.35)",
+        borderBottom: "1px solid rgba(255,255,255,0.1)",
+      }}
+      className="w-full"
+    >
       <div
         className="max-w-screen-xl mx-auto px-4 flex items-center justify-between flex-wrap gap-2"
-        style={{ minHeight: 68 }}
+        style={{ minHeight: 72 }}
       >
         {/* Logo */}
-        <Link href="/">
+        <Link href="/" className="transition-opacity hover:opacity-75">
           <Image
             src="/icons/ibisistlogoheader.png"
             alt="Ibisist"
@@ -40,14 +48,12 @@ export default function Navbar() {
 
         {/* Hamburger button (mobile) */}
         <button
-          className="md:hidden flex flex-col gap-1 p-2 rounded focus:outline-none"
+          className="md:hidden flex items-center justify-center p-2 rounded-lg hover:bg-white/10 transition-all focus-visible:ring-2 focus-visible:ring-white/50"
           onClick={() => setMenuOpen((prev) => !prev)}
           aria-label="Menu"
           style={{ minHeight: 40, cursor: "pointer" }}
         >
-          <span className="block w-6 h-0.5 bg-white"></span>
-          <span className="block w-6 h-0.5 bg-white"></span>
-          <span className="block w-6 h-0.5 bg-white"></span>
+          {menuOpen ? <X size={24} color="white" /> : <Menu size={24} color="white" />}
         </button>
 
         {/* Nav links (desktop) */}
@@ -59,12 +65,19 @@ export default function Navbar() {
                 <li key={link.href}>
                   <Link
                     href={link.href}
-                    className={`px-3 py-1.5 rounded transition-colors ${
-                      isActive
-                        ? "text-white underline underline-offset-4"
-                        : "text-blue-100 hover:text-white"
+                    className={`transition-colors focus-visible:ring-2 focus-visible:ring-white/50 ${
+                      isActive ? "text-white" : "hover:text-white"
                     }`}
-                    style={{ fontFamily: "var(--font-nunito), system-ui, sans-serif", fontSize: 14, fontWeight: 600, letterSpacing: "0.05em" }}
+                    style={{
+                      fontFamily: "var(--font-nunito), system-ui, sans-serif",
+                      fontSize: 14,
+                      letterSpacing: "0.05em",
+                      padding: "4px 14px",
+                      borderRadius: 99,
+                      background: isActive ? "rgba(255,255,255,0.18)" : "transparent",
+                      color: isActive ? "white" : "rgba(255,255,255,0.75)",
+                      fontWeight: isActive ? 700 : 600,
+                    }}
                   >
                     {link.label}
                   </Link>
@@ -75,19 +88,18 @@ export default function Navbar() {
           <form action={logout}>
             <button
               type="submit"
-              className="ml-2 px-3 py-1.5 rounded-lg text-white transition-colors"
+              className="ml-2 px-3 py-1.5 rounded-lg text-white transition-all hover:bg-white/15 flex items-center gap-1.5"
               style={{
                 fontFamily: "var(--font-nunito), system-ui, sans-serif",
                 fontSize: 14,
                 fontWeight: 600,
                 letterSpacing: "0.05em",
-                background: "transparent",
-                border: "1px solid rgba(255,255,255,0.5)",
+                background: "rgba(255,255,255,0.08)",
+                border: "1px solid rgba(255,255,255,0.3)",
                 cursor: "pointer",
               }}
-              onMouseOver={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.1)")}
-              onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
             >
+              <LogOut size={14} />
               Sair
             </button>
           </form>
