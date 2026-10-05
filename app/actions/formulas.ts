@@ -174,6 +174,50 @@ export async function getFormulaCusto(formula_id: string): Promise<FormulaCusto>
   };
 }
 
+export async function duplicarFormula(
+  formula_id: string,
+  novo_nome: string,
+  nova_sigla: string,
+  insumoOverrides?: Array<{ insumo_id: string; quantidade: number; unidade: string }>
+): Promise<FormulaWithInsumos> {
+  const supabase = await createClient();
+  const user = await getCurrentUser();
+
+  const original = await getFormulaWithInsumos(formula_id);
+
+  const { data: novaFormula, error } = await supabase
+    .from("formulas")
+    .insert({
+      nome: novo_nome,
+      sigla: nova_sigla,
+      rendimento: original.rendimento,
+      rendimento_unidade: original.rendimento_unidade,
+      obs: original.obs,
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+
+  const insumosFonte = insumoOverrides ?? original.formula_insumos;
+
+  if (insumosFonte.length > 0) {
+    const inserts = insumosFonte.map((fi) => ({
+      formula_id: novaFormula.id,
+      insumo_id: fi.insumo_id,
+      quantidade: fi.quantidade,
+      unidade: fi.unidade,
+    }));
+    const { error: insError } = await supabase
+      .from("formula_insumos")
+      .insert(inserts);
+    if (insError) throw new Error(insError.message);
+  }
+
+  await logAtividade("Fórmula duplicada", novo_nome, user?.id, user?.email);
+
+  return getFormulaWithInsumos(novaFormula.id);
+}
+
 export async function getInsumosList(): Promise<InsumoBasic[]> {
   const supabase = await createClient();
   const { data, error } = await supabase

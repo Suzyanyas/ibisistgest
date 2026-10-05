@@ -889,9 +889,9 @@ export default function DashboardClient({
               ).map((item, idx) => (
                 <li
                   key={`${item.created_at}-${idx}`}
-                  className="flex items-center justify-between gap-2 py-1 border-b border-gray-100 last:border-0"
+                  className="flex flex-col gap-0.5 py-1.5 border-b border-gray-100 last:border-0"
                 >
-                  <div className="min-w-0 truncate flex items-center">
+                  <div className="flex items-center">
                     <span
                       aria-hidden="true"
                       style={{
@@ -907,21 +907,34 @@ export default function DashboardClient({
                     <span className="font-semibold text-gray-800" style={{ fontSize: 12.5 }}>
                       {item.action}
                     </span>
-                    <span className="text-gray-500 ml-1.5" style={{ fontSize: 12.5 }}>
+                  </div>
+                  {item.detail && (
+                    <span
+                      className="text-gray-500 line-clamp-2"
+                      style={{
+                        fontSize: 12.5,
+                        whiteSpace: "normal",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        paddingLeft: 16,
+                      }}
+                    >
                       {item.detail}
                     </span>
+                  )}
+                  <div className="flex items-center justify-between" style={{ paddingLeft: 16 }}>
                     {item.user_email && (
-                      <span className="ml-1.5" style={{ fontSize: 11, color: "#00ACC1" }}>
-                        · {item.user_email?.split("@")[0] ?? ""}
+                      <span style={{ fontSize: 11, color: "#00ACC1" }}>
+                        {item.user_email?.split("@")[0] ?? ""}
                       </span>
                     )}
+                    <span
+                      className="flex-shrink-0 text-gray-400 ml-auto"
+                      style={{ fontSize: 11 }}
+                    >
+                      {formatRelativeTime(item.created_at)}
+                    </span>
                   </div>
-                  <span
-                    className="flex-shrink-0 text-gray-400"
-                    style={{ fontSize: 11 }}
-                  >
-                    {formatRelativeTime(item.created_at)}
-                  </span>
                 </li>
               ))}
             </ul>

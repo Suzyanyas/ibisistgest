@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Trash2, AlertTriangle, FlaskConical } from "lucide-react";
+import { Trash2, AlertTriangle, FlaskConical, Copy } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   createFormula,
   updateFormula,
   updateFormulaInsumo,
   deleteFormula,
+  duplicarFormula,
   addInsumoToFormula,
   removeInsumoFromFormula,
   getFormulaWithInsumos,
@@ -19,10 +20,23 @@ import {
 } from "@/app/actions/formulas";
 import { updateCustoInsumo } from "@/app/actions/insumos";
 
-type ModalType = null | "nova" | "editar" | "addInsumo" | "excluir" | "editInsumo" | "removeInsumo";
+type ModalType = null | "nova" | "editar" | "duplicar" | "addInsumo" | "excluir" | "editInsumo" | "removeInsumo";
+
+type DuplicarInsumoRow = {
+  insumo_id: string;
+  insumo_nome: string;
+  quantidade: string;
+  unidade: string;
+  isNew?: boolean;
+};
 
 const RENDIMENTO_UNIDADES = ["L", "KG", "UN"];
 const INSUMO_UNIDADES = ["KG", "L", "G", "ML", "PCT", "UN"];
+
+function isFraganciaInsumo(nome: string): boolean {
+  const lower = nome.toLowerCase();
+  return lower.includes("ess") || lower.includes("essencia") || lower.includes("fragran");
+}
 
 function convertToBase(quantidade: number, fromUnit: string, toUnit: string): number {
   if (fromUnit === toUnit) return quantidade;
@@ -41,11 +55,13 @@ function Modal({
   onClose,
   children,
   danger,
+  contentStyle,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   danger?: boolean;
+  contentStyle?: React.CSSProperties;
 }) {
   return (
     <div
@@ -54,7 +70,7 @@ function Modal({
     >
       <div
         className="bg-white w-full max-w-sm mx-4 md:max-w-md"
-        style={{ borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
+        style={{ borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.18)", ...contentStyle }}
       >
         <div
           className="flex items-center justify-between px-6 py-4"
@@ -205,6 +221,13 @@ export default function FormulasClient({
   const [form, setForm] = useState(emptyFormulaForm());
   const [siglaManuallyEdited, setSiglaManuallyEdited] = useState(false);
 
+  // Duplicar formula form
+  const [dupNome, setDupNome] = useState("");
+  const [dupSigla, setDupSigla] = useState("");
+  const [dupSiglaManuallyEdited, setDupSiglaManuallyEdited] = useState(false);
+  const [dupSaving, setDupSaving] = useState(false);
+  const [duplicarInsumos, setDuplicarInsumos] = useState<DuplicarInsumoRow[]>([]);
+
   // Add insumo form
   const [insumosList, setInsumosList] = useState<InsumoBasic[]>([]);
   const [insumosLoading, setInsumosLoading] = useState(false);
@@ -239,6 +262,10 @@ export default function FormulasClient({
     setModalError(null);
     setForm(emptyFormulaForm());
     setSiglaManuallyEdited(false);
+    setDupNome("");
+    setDupSigla("");
+    setDupSiglaManuallyEdited(false);
+    setDuplicarInsumos([]);
     setSelInsumoId("");
     setInsQtd("");
     setInsUnidade("KG");
@@ -286,6 +313,51 @@ export default function FormulasClient({
     setForm(fromFormula(detail));
     setModalError(null);
     setModal("editar");
+  }
+
+  async function openDuplicar() {
+    if (!detail) return;
+    const nomeSugerido = `${detail.nome} (cópia)`;
+    setDupNome(nomeSugerido);
+    setDupSigla(generateSigla(nomeSugerido));
+    setDupSiglaManuallyEdited(false);
+    setDuplicarInsumos(
+      detail.formula_insumos.map((fi) => ({
+        insumo_id: fi.insumo_id,
+        insumo_nome: fi.insumos?.nome ?? "—",
+        quantidade: String(fi.quantidade),
+        unidade: fi.unidade,
+      }))
+    );
+    setModalError(null);
+    setModal("duplicar");
+    setInsumosLoading(true);
+    try {
+      const list = await getInsumosList();
+      setInsumosList(list);
+    } catch (e) {
+      setModalError(e instanceof Error ? e.message : "Erro ao carregar insumos.");
+    } finally {
+      setInsumosLoading(false);
+    }
+  }
+
+  function addDuplicarRow() {
+    const first = insumosList[0];
+    setDuplicarInsumos((prev) => [
+      ...prev,
+      {
+        insumo_id: first?.id ?? "",
+        insumo_nome: first?.nome ?? "",
+        quantidade: "",
+        unidade: first?.unidade ?? "KG",
+        isNew: true,
+      },
+    ]);
+  }
+
+  function removeDuplicarRow(idx: number) {
+    setDuplicarInsumos((prev) => prev.filter((_, i) => i !== idx));
   }
 
   async function openAddInsumo() {
@@ -399,6 +471,45 @@ export default function FormulasClient({
       await reloadDetail();
     } catch (e) {
       setModalError(e instanceof Error ? e.message : "Erro ao salvar.");
+    }
+  }
+
+  async function handleSaveDuplicar() {
+    if (!selectedId) return;
+    if (!dupNome.trim()) return setModalError("Nome é obrigatório.");
+    if (!dupSigla.trim()) return setModalError("Sigla é obrigatória.");
+
+    const insumoOverrides: Array<{ insumo_id: string; quantidade: number; unidade: string }> = [];
+    for (const row of duplicarInsumos) {
+      if (!row.insumo_id) {
+        return setModalError("Selecione um insumo para todas as linhas adicionadas.");
+      }
+      const qtd = parseFloat(row.quantidade.replace(",", "."));
+      if (isNaN(qtd) || qtd <= 0) {
+        return setModalError(`Quantidade inválida para "${row.insumo_nome || "novo insumo"}".`);
+      }
+      insumoOverrides.push({ insumo_id: row.insumo_id, quantidade: qtd, unidade: row.unidade });
+    }
+
+    setModalError(null);
+    setDupSaving(true);
+    try {
+      const nova = await duplicarFormula(
+        selectedId,
+        dupNome.trim(),
+        dupSigla.trim().toUpperCase(),
+        insumoOverrides
+      );
+      setFormulas((prev) =>
+        [...prev, nova].sort((a, b) => a.nome.localeCompare(b.nome))
+      );
+      closeModal();
+      refresh();
+      await selectFormula(nova.id);
+    } catch (e) {
+      setModalError(e instanceof Error ? e.message : "Erro ao duplicar.");
+    } finally {
+      setDupSaving(false);
     }
   }
 
@@ -644,6 +755,16 @@ export default function FormulasClient({
                 >
                   Editar Fórmula
                 </button>
+                {isAdmin && (
+                  <button
+                    onClick={openDuplicar}
+                    className="px-3 py-1.5 rounded border border-blue-300 text-sm font-semibold hover:bg-blue-50 transition flex items-center gap-1.5"
+                    style={{ color: "#1565C0" }}
+                  >
+                    <Copy size={14} />
+                    Duplicar
+                  </button>
+                )}
                 <button
                   onClick={openExcluir}
                   className="px-3 py-1.5 rounded border border-red-300 text-sm font-semibold hover:bg-red-50 transition"
@@ -899,6 +1020,171 @@ export default function FormulasClient({
               onSave={handleSaveEditar}
               saveLabel={isPending ? "Salvando..." : "SALVAR"}
               disabled={isPending}
+            />
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Modal: Duplicar Fórmula ── */}
+      {modal === "duplicar" && detail && (
+        <Modal
+          title="Duplicar Fórmula"
+          onClose={closeModal}
+          contentStyle={{ maxHeight: "90vh", overflowY: "auto" }}
+        >
+          <div className="flex flex-col gap-4">
+            <p style={{ fontSize: 14, color: "#6B7A99" }}>
+              A duplicar: <strong>{detail.nome}</strong>
+            </p>
+            <Field label="Nome da nova fórmula *">
+              <input
+                className={inputCls}
+                value={dupNome}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setDupNome(value);
+                  if (!dupSiglaManuallyEdited) {
+                    setDupSigla(generateSigla(value));
+                  }
+                }}
+                placeholder="Nome da nova fórmula"
+              />
+            </Field>
+            <Field label="Sigla * (máx. 6 caracteres)">
+              <input
+                className={inputCls}
+                value={dupSigla}
+                onChange={(e) => {
+                  setDupSigla(e.target.value.toUpperCase().slice(0, 6));
+                  setDupSiglaManuallyEdited(true);
+                }}
+                placeholder="Ex: DET01"
+                maxLength={6}
+              />
+            </Field>
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium" style={{ color: "#1A3A6B" }}>
+                Insumos
+              </label>
+              {duplicarInsumos.length > 0 && (
+                <div className="overflow-x-auto rounded-lg border border-gray-200">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr style={{ backgroundColor: "#F0F7FF" }}>
+                        <th className="text-left px-3 py-2" style={{ fontSize: 12, color: "#1A3A6B" }}>
+                          Insumo
+                        </th>
+                        <th className="text-left px-3 py-2" style={{ fontSize: 12, color: "#1A3A6B" }}>
+                          Quantidade
+                        </th>
+                        <th className="text-left px-3 py-2" style={{ fontSize: 12, color: "#1A3A6B" }}>
+                          Unidade
+                        </th>
+                        <th className="text-left px-3 py-2" style={{ fontSize: 12, color: "#1A3A6B" }}>
+                          Ação
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {duplicarInsumos.map((row, idx) => {
+                        const highlight = isFraganciaInsumo(row.insumo_nome);
+                        return (
+                          <tr
+                            key={row.isNew ? `novo-${idx}` : row.insumo_id}
+                            style={{
+                              backgroundColor: highlight ? "#E8F0FE" : idx % 2 === 0 ? "#FAFBFF" : "#ffffff",
+                            }}
+                          >
+                            <td
+                              className="px-3 py-2"
+                              style={{ color: highlight ? "#1565C0" : "#374151", fontWeight: highlight ? 700 : 400 }}
+                            >
+                              <select
+                                className="border border-gray-200 rounded px-2 py-1 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={row.insumo_id}
+                                onChange={(e) => {
+                                  const id = e.target.value;
+                                  const ins = insumosList.find((i) => i.id === id);
+                                  setDuplicarInsumos((prev) =>
+                                    prev.map((r, i) =>
+                                      i === idx
+                                        ? { ...r, insumo_id: id, insumo_nome: ins?.nome ?? "", unidade: ins?.unidade ?? r.unidade }
+                                        : r
+                                    )
+                                  );
+                                }}
+                              >
+                                {row.isNew && <option value="">Selecione...</option>}
+                                {insumosList.map((ins) => (
+                                  <option key={ins.id} value={ins.id}>
+                                    {ins.nome}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                className="border border-gray-200 rounded px-2 py-1 text-sm w-24 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                style={highlight ? { borderColor: "#1565C0" } : undefined}
+                                type="text"
+                                inputMode="numeric"
+                                value={row.quantidade}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setDuplicarInsumos((prev) =>
+                                    prev.map((r, i) => (i === idx ? { ...r, quantidade: value } : r))
+                                  );
+                                }}
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-gray-700">
+                              <select
+                                className="border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={row.unidade}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setDuplicarInsumos((prev) =>
+                                    prev.map((r, i) => (i === idx ? { ...r, unidade: value } : r))
+                                  );
+                                }}
+                              >
+                                {INSUMO_UNIDADES.map((u) => (
+                                  <option key={u} value={u}>{u}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-3 py-2">
+                              <button
+                                onClick={() => removeDuplicarRow(idx)}
+                                title="Remover insumo"
+                                className="w-6 h-6 flex items-center justify-center rounded text-white hover:scale-110 transition-transform active:scale-95"
+                                style={{ backgroundColor: "#C62828" }}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <button
+                onClick={addDuplicarRow}
+                disabled={insumosLoading || insumosList.length === 0}
+                className="self-start px-3 py-1 rounded border border-blue-300 text-xs font-semibold hover:bg-blue-50 transition disabled:opacity-60"
+                style={{ color: "#1565C0" }}
+              >
+                + Adicionar Insumo
+              </button>
+            </div>
+            <ErrorMsg msg={modalError} />
+            <ModalActions
+              onCancel={closeModal}
+              onSave={handleSaveDuplicar}
+              saveLabel={dupSaving ? "Duplicando..." : "DUPLICAR"}
+              disabled={dupSaving}
             />
           </div>
         </Modal>
