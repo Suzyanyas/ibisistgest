@@ -81,6 +81,18 @@ export async function deleteFormula(id: string): Promise<void> {
   const supabase = await createClient();
   const user = await getCurrentUser();
 
+  const { count: loteCount, error: loteError } = await supabase
+    .from("lotes_producao")
+    .select("id", { count: "exact", head: true })
+    .eq("formula_id", id);
+  if (loteError) throw new Error(loteError.message);
+
+  if ((loteCount ?? 0) > 0) {
+    throw new Error(
+      "Esta fórmula está a ser usada em lotes de produção e não pode ser excluída."
+    );
+  }
+
   const { data: formula } = await supabase
     .from("formulas")
     .select("nome")

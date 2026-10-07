@@ -124,6 +124,19 @@ export async function createLote(
 
 export async function deleteLote(id: string): Promise<void> {
   const supabase = await createClient();
+
+  const { count: produtoCount, error: produtoError } = await supabase
+    .from("produtos_acabados")
+    .select("id", { count: "exact", head: true })
+    .eq("lote_id", id);
+  if (produtoError) throw new Error(produtoError.message);
+
+  if ((produtoCount ?? 0) > 0) {
+    throw new Error(
+      "Este lote está vinculado a um produto acabado e não pode ser excluído."
+    );
+  }
+
   const { error } = await supabase.from("lotes_producao").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
