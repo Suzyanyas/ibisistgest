@@ -33,6 +33,14 @@ type DuplicarInsumoRow = {
 const RENDIMENTO_UNIDADES = ["L", "KG", "UN"];
 const INSUMO_UNIDADES = ["KG", "L", "G", "ML", "PCT", "UN"];
 
+function getUnidadesCompativeis(insumoUnidade: string): string[] {
+  if (insumoUnidade === "KG" || insumoUnidade === "G") return ["KG", "G"];
+  if (insumoUnidade === "L" || insumoUnidade === "ML") return ["L", "ML"];
+  if (insumoUnidade === "UN") return ["UN"];
+  if (insumoUnidade === "PCT") return ["PCT"];
+  return INSUMO_UNIDADES;
+}
+
 function isFraganciaInsumo(nome: string): boolean {
   const lower = nome.toLowerCase();
   return lower.includes("ess") || lower.includes("essencia") || lower.includes("fragran");
@@ -1148,7 +1156,9 @@ export default function FormulasClient({
                                   );
                                 }}
                               >
-                                {INSUMO_UNIDADES.map((u) => (
+                                {getUnidadesCompativeis(
+                                  insumosList.find((i) => i.id === row.insumo_id)?.unidade ?? row.unidade
+                                ).map((u) => (
                                   <option key={u} value={u}>{u}</option>
                                 ))}
                               </select>
@@ -1238,7 +1248,9 @@ export default function FormulasClient({
                     value={insUnidade}
                     onChange={(e) => setInsUnidade(e.target.value)}
                   >
-                    {INSUMO_UNIDADES.map((u) => (
+                    {getUnidadesCompativeis(
+                      insumosList.find((i) => i.id === selInsumoId)?.unidade ?? ""
+                    ).map((u) => (
                       <option key={u} value={u}>
                         {u}
                       </option>
@@ -1286,7 +1298,7 @@ export default function FormulasClient({
                 value={editInsUnidade}
                 onChange={(e) => setEditInsUnidade(e.target.value)}
               >
-                {INSUMO_UNIDADES.map((u) => (
+                {getUnidadesCompativeis(targetInsumo.insumos?.unidade ?? "").map((u) => (
                   <option key={u} value={u}>{u}</option>
                 ))}
               </select>

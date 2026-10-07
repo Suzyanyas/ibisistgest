@@ -48,14 +48,26 @@ export async function createProdutoAcabado(
   estoque_1l: number,
   estoque_2l: number,
   estoque_5l: number,
-  estoque_20l: number
+  estoque_20l: number,
+  formula_id?: string | null
 ): Promise<void> {
   const supabase = await createClient();
   const user = await getCurrentUser();
+
+  const { data: existente, error: checkErr } = await supabase
+    .from("produtos_acabados")
+    .select("id")
+    .ilike("nome", nome);
+  if (checkErr) throw new Error(checkErr.message);
+  if (existente && existente.length > 0) {
+    throw new Error(`Já existe um produto com o nome '${nome}'. Escolha um nome diferente.`);
+  }
+
   const estoque_atual = estoque_1l + estoque_2l + estoque_5l + estoque_20l;
   const { error } = await supabase.from("produtos_acabados").insert({
     nome,
     lote_id: lote_id || null,
+    formula_id: formula_id || null,
     estoque_atual,
     estoque_seguranca,
     estoque_1l,

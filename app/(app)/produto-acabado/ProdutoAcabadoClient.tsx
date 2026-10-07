@@ -14,6 +14,7 @@ import {
   type LoteConcluidoWithFormula,
   type HistoricoProdutoItem,
 } from "@/app/actions/produto-acabado";
+import { getFormulasList, type FormulaBasic } from "@/app/actions/producao";
 
 function formatDataEnvase(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -137,6 +138,9 @@ export default function ProdutoAcabadoClient({
   >([]);
   const [lotesLoading, setLotesLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
+  const [novoProdutoFormulaId, setNovoProdutoFormulaId] = useState("");
+  const [formulas, setFormulas] = useState<FormulaBasic[]>([]);
+  const [formulasLoading, setFormulasLoading] = useState(false);
 
   // Retirada state
   const [retiradaProduto, setRetiradaProduto] =
@@ -183,6 +187,7 @@ export default function ProdutoAcabadoClient({
   async function openNovoProduto() {
     setNovoProdutoNome("");
     setNovoProdutoLoteId("");
+    setNovoProdutoFormulaId("");
     setNovoProduto1l("0");
     setNovoProduto2l("0");
     setNovoProduto5l("0");
@@ -191,6 +196,7 @@ export default function ProdutoAcabadoClient({
     setModalError(null);
     setModal("novoProduto");
     setLotesLoading(true);
+    setFormulasLoading(true);
     try {
       const lotes = await getLotesConcluidos();
       setLotesConcluidos(lotes);
@@ -198,6 +204,14 @@ export default function ProdutoAcabadoClient({
       // non-fatal — lote field stays empty
     } finally {
       setLotesLoading(false);
+    }
+    try {
+      const fs = await getFormulasList();
+      setFormulas(fs);
+    } catch {
+      // non-fatal — formula select stays empty
+    } finally {
+      setFormulasLoading(false);
     }
   }
 
@@ -242,6 +256,8 @@ export default function ProdutoAcabadoClient({
   async function handleSaveNovoProduto() {
     if (!novoProdutoNome.trim())
       return setModalError("Nome é obrigatório.");
+    if (!novoProdutoFormulaId)
+      return setModalError("Selecione a fórmula correspondente a este produto.");
     const n1l = parseInt(novoProduto1l, 10) || 0;
     const n2l = parseInt(novoProduto2l, 10) || 0;
     const n5l = parseInt(novoProduto5l, 10) || 0;
@@ -259,7 +275,8 @@ export default function ProdutoAcabadoClient({
         n1l,
         n2l,
         n5l,
-        n20l
+        n20l,
+        novoProdutoFormulaId
       );
       closeModal();
       await refreshData();
@@ -622,6 +639,27 @@ export default function ProdutoAcabadoClient({
                 onChange={(e) => setNovoProdutoNome(e.target.value)}
                 placeholder="Ex: Detergente 1L"
               />
+            </Field>
+
+            <Field label="Fórmula *">
+              {formulasLoading ? (
+                <p className="text-xs text-gray-400 py-1">
+                  Carregando fórmulas...
+                </p>
+              ) : (
+                <select
+                  className={inputCls}
+                  value={novoProdutoFormulaId}
+                  onChange={(e) => setNovoProdutoFormulaId(e.target.value)}
+                >
+                  <option value="">— Selecione —</option>
+                  {formulas.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.nome} ({f.sigla})
+                    </option>
+                  ))}
+                </select>
+              )}
             </Field>
 
             <Field label="Lote (opcional)">

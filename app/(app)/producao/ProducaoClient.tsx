@@ -36,6 +36,14 @@ type EditableInsumo = { insumo_id: string; nome: string; quantidade: number; uni
 
 const INSUMO_UNIDADES = ["KG", "L", "G", "ML", "PCT", "UN"];
 
+function getUnidadesCompativeis(insumoUnidade: string): string[] {
+  if (insumoUnidade === "KG" || insumoUnidade === "G") return ["KG", "G"];
+  if (insumoUnidade === "L" || insumoUnidade === "ML") return ["L", "ML"];
+  if (insumoUnidade === "UN") return ["UN"];
+  if (insumoUnidade === "PCT") return ["PCT"];
+  return INSUMO_UNIDADES;
+}
+
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -793,7 +801,10 @@ export default function ProducaoClient({
                                         }}
                                         className="border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-600"
                                       >
-                                        {INSUMO_UNIDADES.map((u) => (
+                                        {getUnidadesCompativeis(
+                                          formulaInsumosPreview.find((fi) => fi.insumo_id === item.insumo_id)
+                                            ?.insumos?.unidade ?? item.unidade
+                                        ).map((u) => (
                                           <option key={u} value={u}>{u}</option>
                                         ))}
                                       </select>
@@ -1174,7 +1185,9 @@ export default function ProducaoClient({
                     value={insUnidade}
                     onChange={(e) => setInsUnidade(e.target.value)}
                   >
-                    {INSUMO_UNIDADES.map((u) => (
+                    {getUnidadesCompativeis(
+                      insumosList.find((i) => i.id === selInsumoId)?.unidade ?? ""
+                    ).map((u) => (
                       <option key={u} value={u}>
                         {u}
                       </option>
@@ -1222,7 +1235,7 @@ export default function ProducaoClient({
                 value={editInsUnidade}
                 onChange={(e) => setEditInsUnidade(e.target.value)}
               >
-                {INSUMO_UNIDADES.map((u) => (
+                {getUnidadesCompativeis(targetInsumo.insumos?.unidade ?? "").map((u) => (
                   <option key={u} value={u}>
                     {u}
                   </option>

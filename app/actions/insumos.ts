@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/app/actions/auth-role";
 import { logAtividade } from "@/app/actions/dashboard";
+import { convertToBaseUnit } from "@/app/actions/utils";
 import type { Tables } from "@/types/supabase";
 
 export type InsumoWithFlag = Tables<"insumos"> & {
@@ -45,19 +46,24 @@ export async function novaEntrada(
   insumo_id: string,
   quantidade: number,
   data: string,
-  obs?: string
+  obs?: string,
+  unidade?: string
 ): Promise<void> {
   const supabase = await createClient();
   const user = await getCurrentUser();
 
   const { data: insumo, error: fetchError } = await supabase
     .from("insumos")
-    .select("estoque_atual")
+    .select("estoque_atual, unidade")
     .eq("id", insumo_id)
     .single();
   if (fetchError) throw new Error(fetchError.message);
 
-  const novoEstoque = insumo.estoque_atual + quantidade;
+  const quantidadeConvertida = unidade
+    ? convertToBaseUnit(quantidade, unidade, insumo.unidade)
+    : quantidade;
+
+  const novoEstoque = insumo.estoque_atual + quantidadeConvertida;
 
   const { error: updateError } = await supabase
     .from("insumos")
@@ -67,7 +73,7 @@ export async function novaEntrada(
 
   const { error: moveError } = await supabase.from("insumo_movimentos").insert({
     insumo_id,
-    quantidade,
+    quantidade: quantidadeConvertida,
     data,
     obs: obs ?? null,
     tipo: "entrada",

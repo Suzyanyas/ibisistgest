@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/app/actions/auth-role";
 import { logAtividade } from "@/app/actions/dashboard";
+import { convertToBaseUnit } from "@/app/actions/utils";
 import type { Tables } from "@/types/supabase";
 
 export type LoteRow = Tables<"lotes_producao">;
@@ -183,7 +184,7 @@ export async function updateLoteStatus(
 
     const { data: loteInsumos, error: liError } = await supabase
       .from("lote_insumos")
-      .select("insumo_id, quantidade")
+      .select("insumo_id, quantidade, unidade")
       .eq("lote_id", id);
     if (liError) throw new Error(liError.message);
 
@@ -194,12 +195,18 @@ export async function updateLoteStatus(
       for (const li of loteInsumos) {
         const { data: insumo, error: insumoError } = await supabase
           .from("insumos")
-          .select("estoque_atual")
+          .select("estoque_atual, unidade")
           .eq("id", li.insumo_id)
           .single();
         if (insumoError) throw new Error(insumoError.message);
 
-        const novoEstoque = Math.max(0, (insumo.estoque_atual ?? 0) - li.quantidade);
+        const qtdConvertida = convertToBaseUnit(
+          li.quantidade,
+          li.unidade,
+          insumo.unidade
+        );
+
+        const novoEstoque = Math.max(0, (insumo.estoque_atual ?? 0) - qtdConvertida);
 
         const { error: updateError } = await supabase
           .from("insumos")
@@ -212,7 +219,7 @@ export async function updateLoteStatus(
           .insert({
             insumo_id: li.insumo_id,
             tipo: "saida",
-            quantidade: li.quantidade,
+            quantidade: qtdConvertida,
             data: today,
             obs,
           });
