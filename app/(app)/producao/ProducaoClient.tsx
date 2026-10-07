@@ -1175,7 +1175,10 @@ export default function ProducaoClient({
                     min="0.001"
                     step="any"
                     value={insQtd}
-                    onChange={(e) => setInsQtd(e.target.value)}
+                    onChange={(e) => {
+                      setModalError(null);
+                      setInsQtd(e.target.value);
+                    }}
                     placeholder="0"
                   />
                 </Field>

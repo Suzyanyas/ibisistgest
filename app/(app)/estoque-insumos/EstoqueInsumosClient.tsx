@@ -609,13 +609,16 @@ export default function EstoqueInsumosClient({
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg shadow">
+      <div className="overflow-x-auto overflow-y-auto rounded-lg shadow" style={{ maxHeight: "70vh" }}>
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr
               style={{
                 background: "linear-gradient(135deg, #1565C0 0%, #1976D2 100%)",
                 boxShadow: "0 2px 8px rgba(21,101,192,0.2)",
+                position: "sticky",
+                top: 0,
+                zIndex: 10,
               }}
             >
               {["Insumo", "Unidade", "Estoque Atual", "Est. Segurança", ...(isAdmin ? ["Custo Unit. (R$)"] : []), "Ações"].map(
