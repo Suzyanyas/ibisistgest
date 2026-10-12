@@ -413,6 +413,9 @@ export default function EstoqueInsumosClient({
         estoque_seguranca: seg,
         custo_unitario: custo,
         custo_unidade: novoCustoUnidade,
+        densidade: null,
+        densidade_confirmada: false,
+        estoque_estimado: false,
         tipo: activeTab,
         estoque_baixo: atual <= seg,
       };
