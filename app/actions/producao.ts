@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/app/actions/auth-role";
 import { logAtividade } from "@/app/actions/dashboard";
+import { rpcError } from "@/lib/supabase/rpc-error";
 import { convertToBaseUnit } from "@/app/actions/utils";
 import type { Tables } from "@/types/supabase";
 
@@ -61,64 +62,24 @@ export async function createLote(
 ): Promise<LoteRow> {
   const supabase = await createClient();
   const user = await getCurrentUser();
-  const { data, error } = await supabase
+  const { data: loteId, error } = await supabase.rpc("criar_lote", {
+    p_formula_id: formula_id,
+    p_numero_lote: numero_lote,
+    p_data_producao: data_producao,
+    p_fragancia: fragancia || null,
+    // lista vazia: a função usa os insumos da fórmula
+    p_insumos: insumoOverrides ?? [],
+    p_user_id: user?.id ?? null,
+    p_user_email: user?.email ?? null,
+  });
+  if (error) throw rpcError(error);
+
+  const { data: lote, error: loteError } = await supabase
     .from("lotes_producao")
-    .insert({
-      formula_id,
-      numero_lote,
-      data_producao,
-      status: "producao",
-      fragancia: fragancia || null,
-      user_id: user?.id ?? null,
-      user_email: user?.email ?? null,
-    })
-    .select()
+    .select("*")
+    .eq("id", loteId as string)
     .single();
-  if (error) throw new Error(error.message);
-  const lote = data;
-
-  let inserts: Array<{ lote_id: string; insumo_id: string; quantidade: number; unidade: string }>;
-
-  if (insumoOverrides && insumoOverrides.length > 0) {
-    inserts = insumoOverrides.map((o) => ({
-      lote_id: lote.id,
-      insumo_id: o.insumo_id,
-      quantidade: o.quantidade,
-      unidade: o.unidade,
-    }));
-  } else {
-    const { data: formulaInsumos, error: fiError } = await supabase
-      .from("formula_insumos")
-      .select("insumo_id, quantidade, unidade")
-      .eq("formula_id", formula_id);
-    if (fiError) throw new Error(fiError.message);
-    inserts = (formulaInsumos ?? []).map((fi) => ({
-      lote_id: lote.id,
-      insumo_id: fi.insumo_id,
-      quantidade: fi.quantidade,
-      unidade: fi.unidade,
-    }));
-  }
-
-  if (inserts.length > 0) {
-    const { error: insertError } = await supabase
-      .from("lote_insumos")
-      .insert(inserts);
-    if (insertError) throw new Error(insertError.message);
-  }
-
-  const { data: formula } = await supabase
-    .from("formulas")
-    .select("nome")
-    .eq("id", formula_id)
-    .single();
-  await logAtividade(
-    "Novo lote",
-    `${numero_lote} — ${formula?.nome ?? "—"}`,
-    user?.id,
-    user?.email
-  );
-
+  if (loteError) throw new Error(loteError.message);
   return lote;
 }
 

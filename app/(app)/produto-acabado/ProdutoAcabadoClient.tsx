@@ -270,7 +270,6 @@ export default function ProdutoAcabadoClient({
     try {
       await createProdutoAcabado(
         novoProdutoNome.trim(),
-        novoProdutoLoteId || null,
         estoqueSegNum,
         n1l,
         n2l,

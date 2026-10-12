@@ -1,7 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentUser } from "@/app/actions/auth-role";
+import { getCurrentUser, getUserRole, requireAdmin } from "@/app/actions/auth-role";
+import { getCustosMap } from "@/lib/custos";
 import { logAtividade } from "@/app/actions/dashboard";
 import type { Tables } from "@/types/supabase";
 
@@ -33,11 +34,27 @@ export async function getFormulaWithInsumos(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("formulas")
-    .select("*, formula_insumos(*, insumos(nome, unidade, custo_unitario, custo_unidade))")
+    .select("*, formula_insumos(*, insumos(nome, unidade))")
     .eq("id", id)
     .single();
   if (error) throw new Error(error.message);
-  return data as FormulaWithInsumos;
+
+  // Custos: só para admin, vindos de insumo_custos; demais recebem null
+  const custos = (await getUserRole()) === "admin" ? await getCustosMap(supabase) : null;
+  const formula_insumos = (data.formula_insumos ?? []).map((fi: Tables<"formula_insumos"> & { insumos: unknown }) => {
+    const insumo = fi.insumos as { nome: string; unidade: string } | null;
+    return {
+      ...fi,
+      insumos: insumo
+        ? {
+            ...insumo,
+            custo_unitario: custos?.get(fi.insumo_id)?.custo_unitario ?? null,
+            custo_unidade: custos?.get(fi.insumo_id)?.custo_unidade ?? null,
+          }
+        : null,
+    };
+  });
+  return { ...data, formula_insumos } as FormulaWithInsumos;
 }
 
 export async function createFormula(payload: {
@@ -159,16 +176,19 @@ export type FormulaCusto = {
   breakdown: FormulaCustoBreakdown[];
 };
 
-export async function getFormulaCusto(formula_id: string): Promise<FormulaCusto> {
+// Retorna null para não-admins: o custo nunca é calculado para eles.
+export async function getFormulaCusto(formula_id: string): Promise<FormulaCusto | null> {
+  if ((await getUserRole()) !== "admin") return null;
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("formula_insumos")
-    .select("id, quantidade, unidade, insumos(nome, custo_unitario)")
+    .select("id, insumo_id, quantidade, unidade, insumos(nome)")
     .eq("formula_id", formula_id);
   if (error) throw new Error(error.message);
+  const custos = await getCustosMap(supabase);
 
   const breakdown: FormulaCustoBreakdown[] = (data ?? []).map((row) => {
-    const custo_unitario = (row.insumos as unknown as { custo_unitario: number | null } | null)?.custo_unitario ?? 0;
+    const custo_unitario = custos.get(row.insumo_id)?.custo_unitario ?? 0;
     const custo_total = row.quantidade * custo_unitario;
     return {
       formula_insumo_id: row.id,
@@ -192,6 +212,7 @@ export async function duplicarFormula(
   nova_sigla: string,
   insumoOverrides?: Array<{ insumo_id: string; quantidade: number; unidade: string }>
 ): Promise<FormulaWithInsumos> {
+  await requireAdmin();
   const supabase = await createClient();
   const user = await getCurrentUser();
 

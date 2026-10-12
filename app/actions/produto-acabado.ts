@@ -1,8 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentUser } from "@/app/actions/auth-role";
-import { logAtividade } from "@/app/actions/dashboard";
+import { getCurrentUser, requireAdmin } from "@/app/actions/auth-role";
+import { rpcError } from "@/lib/supabase/rpc-error";
 import type { Tables } from "@/types/supabase";
 
 export type ProdutoAcabadoRow = Tables<"produtos_acabados">;
@@ -43,40 +43,29 @@ export async function getProdutosAcabados(): Promise<ProdutoAcabadoWithFlag[]> {
 
 export async function createProdutoAcabado(
   nome: string,
-  lote_id: string | null,
   estoque_seguranca: number,
   estoque_1l: number,
   estoque_2l: number,
   estoque_5l: number,
   estoque_20l: number,
-  formula_id?: string | null
+  formula_id: string
 ): Promise<void> {
   const supabase = await createClient();
   const user = await getCurrentUser();
-
-  const { data: existente, error: checkErr } = await supabase
-    .from("produtos_acabados")
-    .select("id")
-    .ilike("nome", nome);
-  if (checkErr) throw new Error(checkErr.message);
-  if (existente && existente.length > 0) {
-    throw new Error(`Já existe um produto com o nome '${nome}'. Escolha um nome diferente.`);
-  }
-
-  const estoque_atual = estoque_1l + estoque_2l + estoque_5l + estoque_20l;
-  const { error } = await supabase.from("produtos_acabados").insert({
-    nome,
-    lote_id: lote_id || null,
-    formula_id: formula_id || null,
-    estoque_atual,
-    estoque_seguranca,
-    estoque_1l,
-    estoque_2l,
-    estoque_5l,
-    estoque_20l,
+  const { error } = await supabase.rpc("criar_produto_acabado", {
+    p_nome: nome,
+    p_formula_id: formula_id,
+    p_estoque_200ml: 0,
+    p_estoque_500ml: 0,
+    p_estoque_1l: estoque_1l,
+    p_estoque_2l: estoque_2l,
+    p_estoque_5l: estoque_5l,
+    p_estoque_20l: estoque_20l,
+    p_estoque_seguranca: estoque_seguranca,
+    p_user_id: user?.id ?? null,
+    p_user_email: user?.email ?? null,
   });
-  if (error) throw new Error(error.message);
-  await logAtividade("Novo produto acabado", nome, user?.id, user?.email);
+  if (error) throw rpcError(error);
 }
 
 export async function registrarRetirada(
@@ -88,47 +77,62 @@ export async function registrarRetirada(
 ): Promise<void> {
   const supabase = await createClient();
   const user = await getCurrentUser();
-  const total = qtd_1l + qtd_2l + qtd_5l + qtd_20l;
-
-  const { data: produto, error: fetchErr } = await supabase
-    .from("produtos_acabados")
-    .select("nome, estoque_atual, estoque_1l, estoque_2l, estoque_5l, estoque_20l")
-    .eq("id", produto_id)
-    .single();
-  if (fetchErr) throw new Error(fetchErr.message);
-
-  const { error: updateErr } = await supabase
-    .from("produtos_acabados")
-    .update({
-      estoque_atual: (produto.estoque_atual ?? 0) - total,
-      estoque_1l: (produto.estoque_1l ?? 0) - qtd_1l,
-      estoque_2l: (produto.estoque_2l ?? 0) - qtd_2l,
-      estoque_5l: (produto.estoque_5l ?? 0) - qtd_5l,
-      estoque_20l: (produto.estoque_20l ?? 0) - qtd_20l,
-    })
-    .eq("id", produto_id);
-  if (updateErr) throw new Error(updateErr.message);
-
-  const today = new Date().toISOString().slice(0, 10);
-  const { error: insertErr } = await supabase.from("produto_retiradas").insert({
-    produto_id,
-    quantidade: total,
-    qtd_1l,
-    qtd_2l,
-    qtd_5l,
-    qtd_20l,
-    data_retirada: today,
-    user_id: user?.id ?? null,
-    user_email: user?.email ?? null,
+  const { error } = await supabase.rpc("registrar_retirada", {
+    p_produto_id: produto_id,
+    p_qtd_200ml: 0,
+    p_qtd_500ml: 0,
+    p_qtd_1l: qtd_1l,
+    p_qtd_2l: qtd_2l,
+    p_qtd_5l: qtd_5l,
+    p_qtd_20l: qtd_20l,
+    p_obs: null,
+    p_user_id: user?.id ?? null,
+    p_user_email: user?.email ?? null,
   });
-  if (insertErr) throw new Error(insertErr.message);
+  if (error) throw rpcError(error);
+}
 
-  await logAtividade(
-    "Retirada de produto",
-    `${produto.nome} — ${total} UND`,
-    user?.id,
-    user?.email
-  );
+// Define o estoque absoluto por tamanho. 200ml/500ml omitidos mantêm o valor atual.
+export async function ajustarProdutoAcabado(
+  produto_id: string,
+  estoque_1l: number,
+  estoque_2l: number,
+  estoque_5l: number,
+  estoque_20l: number,
+  estoque_200ml?: number,
+  estoque_500ml?: number,
+  obs?: string
+): Promise<void> {
+  await requireAdmin();
+  const supabase = await createClient();
+  const user = await getCurrentUser();
+
+  let atual200 = estoque_200ml;
+  let atual500 = estoque_500ml;
+  if (atual200 === undefined || atual500 === undefined) {
+    const { data: produto, error: fetchError } = await supabase
+      .from("produtos_acabados")
+      .select("estoque_200ml, estoque_500ml")
+      .eq("id", produto_id)
+      .single();
+    if (fetchError) throw new Error(fetchError.message);
+    atual200 ??= produto.estoque_200ml ?? 0;
+    atual500 ??= produto.estoque_500ml ?? 0;
+  }
+
+  const { error } = await supabase.rpc("ajustar_produto_acabado", {
+    p_produto_id: produto_id,
+    p_estoque_200ml: atual200,
+    p_estoque_500ml: atual500,
+    p_estoque_1l: estoque_1l,
+    p_estoque_2l: estoque_2l,
+    p_estoque_5l: estoque_5l,
+    p_estoque_20l: estoque_20l,
+    p_obs: obs ?? null,
+    p_user_id: user?.id ?? null,
+    p_user_email: user?.email ?? null,
+  });
+  if (error) throw rpcError(error);
 }
 
 export async function getRetiradasHoje(): Promise<RetiradasHoje[]> {
