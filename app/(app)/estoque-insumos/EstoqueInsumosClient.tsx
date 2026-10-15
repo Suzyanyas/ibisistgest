@@ -12,9 +12,11 @@ import {
   getMovimentos,
   getInsumos,
   getInsumosAbaixoMinimo,
+  confirmarDensidade,
   type InsumoWithFlag,
   type Movimento,
 } from "@/app/actions/insumos";
+import { getUnidadesCompativeis, converterUnidade } from "@/lib/unidades";
 
 type ModalType = null | "novo" | "entrada" | "atualizacao" | "historico" | "editar" | "excluir" | "relatorio";
 type TabType = "producao" | "material";
@@ -23,6 +25,20 @@ const TABS: { key: TabType; label: string }[] = [
   { key: "producao", label: "Insumos de Produção" },
   { key: "material", label: "Materiais & EPI" },
 ];
+
+const CATEGORIAS: { value: string; label: string }[] = [
+  { value: "garrafa_200ml", label: "Garrafa 200 ML" },
+  { value: "garrafa_500ml", label: "Garrafa 500 ML" },
+  { value: "garrafa_1l", label: "Garrafa 1L" },
+  { value: "garrafa_2l", label: "Garrafa 2L" },
+  { value: "garrafa_5l", label: "Garrafa 5L" },
+  { value: "garrafa_20l", label: "Garrafa 20L" },
+  { value: "tampa", label: "Tampa" },
+  { value: "alca", label: "Alça" },
+];
+
+const categoriaLabel = (value: string) =>
+  CATEGORIAS.find((c) => c.value === value)?.label ?? value;
 
 const today = () => new Date().toISOString().split("T")[0];
 
@@ -103,6 +119,79 @@ function Field({
 const inputCls =
   "border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 w-full";
 
+const DENSIDADE_AJUDA =
+  "Preencha quando o insumo é comprado por peso e usado por volume, ou o contrário.";
+
+function CategoriaSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <Field label="Categoria">
+      <select className={inputCls} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Sem categoria</option>
+        {CATEGORIAS.map((c) => (
+          <option key={c.value} value={c.value}>
+            {c.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
+function DensidadeField({
+  value,
+  onChange,
+  isAdmin,
+  acao,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  isAdmin: boolean;
+  acao?: React.ReactNode;
+}) {
+  return (
+    <Field label="Densidade (g/ml)">
+      <div className="flex gap-2 items-center">
+        <input
+          className={`${inputCls}${isAdmin ? "" : " bg-gray-50 text-gray-500"}`}
+          type="text"
+          inputMode="decimal"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={!isAdmin}
+          placeholder="Opcional"
+        />
+        {acao}
+      </div>
+      <p className="text-xs text-gray-500">{DENSIDADE_AJUDA}</p>
+    </Field>
+  );
+}
+
+function Badge({ children, title, bg, color }: { children: React.ReactNode; title?: string; bg: string; color: string }) {
+  return (
+    <span
+      title={title}
+      className="inline-block px-1.5 py-0.5 rounded text-xs font-semibold"
+      style={{ backgroundColor: bg, color }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function parseDensidade(raw: string): number | null | undefined {
+  const t = raw.trim().replace(",", ".");
+  if (!t) return undefined;
+  const n = parseFloat(t);
+  return isNaN(n) || n <= 0 ? null : n;
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function EstoqueInsumosClient({
   initialInsumos,
@@ -157,9 +246,25 @@ export default function EstoqueInsumosClient({
   const [novoEstoqueSeguranca, setNovoEstoqueSeguranca] = useState("");
   const [novoCustoUnitario, setNovoCustoUnitario] = useState("");
   const [novoCustoUnidade, setNovoCustoUnidade] = useState("KG");
+  const [novoCategoria, setNovoCategoria] = useState("");
+  const [novoDensidade, setNovoDensidade] = useState("");
+
+  // ── Save pending (evita duplo clique em SALVAR) ──
+  const [saving, setSaving] = useState(false);
+  const busy = isPending || saving;
+  async function comSalvando(fn: () => Promise<void>) {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await fn();
+    } finally {
+      setSaving(false);
+    }
+  }
 
   // ── Form state: Entrada ──
   const [entradaQtd, setEntradaQtd] = useState("");
+  const [entradaUnidade, setEntradaUnidade] = useState("KG");
   const [entradaData, setEntradaData] = useState(today());
   const [entradaObs, setEntradaObs] = useState("");
 
@@ -174,6 +279,9 @@ export default function EstoqueInsumosClient({
   const [editEstoqueSeguranca, setEditEstoqueSeguranca] = useState("");
   const [editCustoUnitario, setEditCustoUnitario] = useState("");
   const [editCustoUnidade, setEditCustoUnidade] = useState("KG");
+  const [editCategoria, setEditCategoria] = useState("");
+  const [editDensidade, setEditDensidade] = useState("");
+  const [densidadeMsg, setDensidadeMsg] = useState<string | null>(null);
 
   // ── PIN confirmation (Editar / Excluir) ──
   const [pin, setPin] = useState("");
@@ -189,7 +297,10 @@ export default function EstoqueInsumosClient({
     setNovoEstoqueSeguranca("");
     setNovoCustoUnitario("");
     setNovoCustoUnidade("KG");
+    setNovoCategoria("");
+    setNovoDensidade("");
     setEntradaQtd("");
+    setEntradaUnidade("KG");
     setEntradaData(today());
     setEntradaObs("");
     setAtuQtd("");
@@ -200,6 +311,9 @@ export default function EstoqueInsumosClient({
     setEditEstoqueSeguranca("");
     setEditCustoUnitario("");
     setEditCustoUnidade("KG");
+    setEditCategoria("");
+    setEditDensidade("");
+    setDensidadeMsg(null);
     setPin("");
     setPinError(null);
     setMovimentos([]);
@@ -210,6 +324,7 @@ export default function EstoqueInsumosClient({
   function openEntrada(insumo: InsumoWithFlag) {
     setSelected(insumo);
     setEntradaQtd("");
+    setEntradaUnidade(insumo.unidade);
     setEntradaData(today());
     setEntradaObs("");
     setError(null);
@@ -232,6 +347,9 @@ export default function EstoqueInsumosClient({
     setEditEstoqueSeguranca(String(insumo.estoque_seguranca));
     setEditCustoUnitario(insumo.custo_unitario != null ? String(insumo.custo_unitario) : "");
     setEditCustoUnidade(insumo.custo_unidade ?? "KG");
+    setEditCategoria(insumo.categoria ?? "");
+    setEditDensidade(insumo.densidade != null ? String(insumo.densidade) : "");
+    setDensidadeMsg(null);
     setPin("");
     setPinError(null);
     setError(null);
@@ -393,6 +511,8 @@ export default function EstoqueInsumosClient({
     const custoRaw = novoCustoUnitario.trim().replace(",", ".");
     const custo = custoRaw ? parseFloat(custoRaw) : 0;
     if (isNaN(custo) || custo < 0) return setError("Custo unitário inválido.");
+    const densidade = isAdmin ? parseDensidade(novoDensidade) : undefined;
+    if (densidade === null) return setError("Densidade inválida: deve ser maior que zero.");
     try {
       await createInsumo({
         nome: novoNome.trim(),
@@ -402,18 +522,20 @@ export default function EstoqueInsumosClient({
         custo_unitario: custo,
         custo_unidade: novoCustoUnidade,
         tipo: activeTab,
+        categoria: novoCategoria || null,
+        densidade: densidade ?? null,
       });
       const novoItem: InsumoWithFlag = {
         id: crypto.randomUUID(),
         created_at: null,
-        categoria: null,
+        categoria: novoCategoria || null,
         nome: novoNome.trim(),
         unidade: novoUnidade,
         estoque_atual: atual,
         estoque_seguranca: seg,
         custo_unitario: custo,
         custo_unidade: novoCustoUnidade,
-        densidade: null,
+        densidade: densidade ?? null,
         densidade_confirmada: false,
         estoque_estimado: false,
         tipo: activeTab,
@@ -435,9 +557,11 @@ export default function EstoqueInsumosClient({
     if (!selected) return;
     const qtd = parseFloat(entradaQtd);
     if (isNaN(qtd) || qtd <= 0) return setError("Quantidade deve ser positiva.");
+    const convertida = converterUnidade(qtd, entradaUnidade, selected.unidade, selected.densidade);
+    if (convertida === null) return setError("Unidade incompatível com este insumo.");
     try {
-      await novaEntrada(selected.id, qtd, entradaData, entradaObs || undefined);
-      const novoAtual = selected.estoque_atual + qtd;
+      await novaEntrada(selected.id, qtd, entradaData, entradaObs || undefined, entradaUnidade);
+      const novoAtual = selected.estoque_atual + convertida;
       setInsumos((prev) =>
         prev.map((ins) =>
           ins.id === selected.id
@@ -496,6 +620,8 @@ export default function EstoqueInsumosClient({
     if (custoRaw && (custo === undefined || isNaN(custo) || custo < 0)) {
       return setError("Custo unitário inválido.");
     }
+    const densidade = isAdmin ? parseDensidade(editDensidade) : undefined;
+    if (densidade === null) return setError("Densidade inválida: deve ser maior que zero.");
     try {
       await updateInsumo(
         selected.id,
@@ -503,12 +629,32 @@ export default function EstoqueInsumosClient({
         editUnidade,
         seg,
         custo,
-        custo !== undefined ? editCustoUnidade : undefined
+        custo !== undefined ? editCustoUnidade : undefined,
+        editCategoria || null,
+        densidade
       );
       closeModal();
       await handleTabChange(activeTab, true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao salvar.");
+    }
+  }
+
+  // ── Confirmar densidade (Editar Insumo, só admin) ──
+  async function handleConfirmarDensidade() {
+    setError(null);
+    setDensidadeMsg(null);
+    if (!selected) return;
+    const d = parseDensidade(editDensidade);
+    if (d == null) return setError("Densidade inválida: deve ser maior que zero.");
+    try {
+      await confirmarDensidade(selected.id, d);
+      setSelected({ ...selected, densidade: d, densidade_confirmada: true });
+      setEditDensidade(String(d));
+      setDensidadeMsg("Densidade confirmada.");
+      await handleTabChange(activeTab, true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao confirmar densidade.");
     }
   }
 
@@ -675,18 +821,33 @@ export default function EstoqueInsumosClient({
                   }}
                 >
                   <td className="px-4 py-4">
-                    <button
-                      onClick={() => openHistorico(ins)}
-                      className="font-medium hover:underline text-left"
-                      style={{ color: "#1565C0", cursor: "pointer" }}
-                    >
-                      {ins.estoque_baixo && (
-                        <span style={{ color: "#D97706", fontSize: 18 }}>
-                          <WarnIcon />
-                        </span>
+                    <div className="flex items-center flex-wrap gap-x-2 gap-y-1">
+                      <button
+                        onClick={() => openHistorico(ins)}
+                        className="font-medium hover:underline text-left"
+                        style={{ color: "#1565C0", cursor: "pointer" }}
+                      >
+                        {ins.estoque_baixo && (
+                          <span style={{ color: "#D97706", fontSize: 18 }}>
+                            <WarnIcon />
+                          </span>
+                        )}
+                        {ins.nome}
+                      </button>
+                      {ins.categoria != null && (
+                        <span className="text-xs text-gray-500">{categoriaLabel(ins.categoria)}</span>
                       )}
-                      {ins.nome}
-                    </button>
+                      {ins.estoque_estimado && (
+                        <Badge bg="#FEF3C7" color="#B45309" title="Valor estimado, confirmar contagem">
+                          Estimado
+                        </Badge>
+                      )}
+                      {isAdmin && ins.densidade != null && !ins.densidade_confirmada && (
+                        <Badge bg="#F3F4F6" color="#4B5563">
+                          Densidade a confirmar
+                        </Badge>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-4 text-gray-700">{ins.unidade}</td>
                   <td
@@ -792,6 +953,8 @@ export default function EstoqueInsumosClient({
                 ))}
               </select>
             </Field>
+            <CategoriaSelect value={novoCategoria} onChange={setNovoCategoria} />
+            <DensidadeField value={novoDensidade} onChange={setNovoDensidade} isAdmin={isAdmin} />
             <Field label="Estoque Atual *">
               <input
                 className={inputCls}
@@ -854,12 +1017,12 @@ export default function EstoqueInsumosClient({
                 CANCELAR
               </button>
               <button
-                onClick={handleSaveNovo}
-                disabled={isPending}
+                onClick={() => comSalvando(handleSaveNovo)}
+                disabled={busy}
                 className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
                 style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
               >
-                {isPending ? "Salvando..." : "SALVAR"}
+                {busy ? "Salvando..." : "SALVAR"}
               </button>
             </div>
           </div>
@@ -893,6 +1056,19 @@ export default function EstoqueInsumosClient({
                 placeholder="0"
               />
             </Field>
+            <Field label="Unidade *">
+              <select
+                className={inputCls}
+                value={entradaUnidade}
+                onChange={(e) => setEntradaUnidade(e.target.value)}
+              >
+                {getUnidadesCompativeis(selected.unidade, selected.densidade).map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="Data *">
               <input
                 className={inputCls}
@@ -909,22 +1085,31 @@ export default function EstoqueInsumosClient({
                 placeholder="Opcional"
               />
             </Field>
-            {entradaQtd && !isNaN(parseFloat(entradaQtd)) && (
-              <div
-                className="rounded px-4 py-2 text-sm"
-                style={{ backgroundColor: "#E8F5E9" }}
-              >
-                <span style={{ color: "#1B5E20" }}>
-                  Novo total:{" "}
-                  <strong>
-                    {(selected.estoque_atual + parseFloat(entradaQtd)).toFixed(
-                      2
-                    )}{" "}
-                    {selected.unidade}
-                  </strong>
-                </span>
-              </div>
-            )}
+            {entradaQtd && !isNaN(parseFloat(entradaQtd)) && (() => {
+              const convertida = converterUnidade(
+                parseFloat(entradaQtd),
+                entradaUnidade,
+                selected.unidade,
+                selected.densidade
+              );
+              return (
+                <div
+                  className="rounded px-4 py-2 text-sm"
+                  style={{ backgroundColor: convertida === null ? "#FFF8E1" : "#E8F5E9" }}
+                >
+                  {convertida === null ? (
+                    <span style={{ color: "#B45309" }}>Unidade incompatível com este insumo.</span>
+                  ) : (
+                    <span style={{ color: "#1B5E20" }}>
+                      Novo total:{" "}
+                      <strong>
+                        {(selected.estoque_atual + convertida).toFixed(2)} {selected.unidade}
+                      </strong>
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
             {error && (
               <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2">
                 {error}
@@ -938,12 +1123,12 @@ export default function EstoqueInsumosClient({
                 CANCELAR
               </button>
               <button
-                onClick={handleSaveEntrada}
-                disabled={isPending}
+                onClick={() => comSalvando(handleSaveEntrada)}
+                disabled={busy}
                 className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
                 style={{ backgroundColor: "#2E7D32", cursor: "pointer" }}
               >
-                {isPending ? "Salvando..." : "SALVAR"}
+                {busy ? "Salvando..." : "SALVAR"}
               </button>
             </div>
           </div>
@@ -1019,12 +1204,12 @@ export default function EstoqueInsumosClient({
                 CANCELAR
               </button>
               <button
-                onClick={handleSaveAtualizacao}
-                disabled={isPending}
+                onClick={() => comSalvando(handleSaveAtualizacao)}
+                disabled={busy}
                 className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
                 style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
               >
-                {isPending ? "Salvando..." : "SALVAR"}
+                {busy ? "Salvando..." : "SALVAR"}
               </button>
             </div>
           </div>
@@ -1056,6 +1241,28 @@ export default function EstoqueInsumosClient({
                 ))}
               </select>
             </Field>
+            <CategoriaSelect value={editCategoria} onChange={setEditCategoria} />
+            <DensidadeField
+              value={editDensidade}
+              onChange={setEditDensidade}
+              isAdmin={isAdmin}
+              acao={
+                isAdmin && selected.densidade != null && !selected.densidade_confirmada ? (
+                  <button
+                    type="button"
+                    onClick={() => comSalvando(handleConfirmarDensidade)}
+                    disabled={busy}
+                    className="px-3 py-2 rounded text-white text-xs font-semibold whitespace-nowrap hover:brightness-110 transition disabled:opacity-60"
+                    style={{ backgroundColor: "#2E7D32", cursor: "pointer" }}
+                  >
+                    {busy ? "Confirmando..." : "Confirmar densidade"}
+                  </button>
+                ) : null
+              }
+            />
+            {densidadeMsg && (
+              <p className="text-sm text-green-700 bg-green-50 rounded px-3 py-2">{densidadeMsg}</p>
+            )}
             <Field label="Estoque de Segurança *">
               <input
                 className={inputCls}
@@ -1120,12 +1327,12 @@ export default function EstoqueInsumosClient({
                 CANCELAR
               </button>
               <button
-                onClick={handleSaveEditar}
-                disabled={isPending}
+                onClick={() => comSalvando(handleSaveEditar)}
+                disabled={busy}
                 className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
                 style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
               >
-                {isPending ? "Salvando..." : "SALVAR"}
+                {busy ? "Salvando..." : "SALVAR"}
               </button>
             </div>
           </div>

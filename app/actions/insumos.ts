@@ -146,21 +146,57 @@ export async function updateCustoInsumo(
   await writeCusto(supabase, id, custo_unitario, custo_unidade);
 }
 
+const CATEGORIAS_VALIDAS = [
+  "garrafa_200ml",
+  "garrafa_500ml",
+  "garrafa_1l",
+  "garrafa_2l",
+  "garrafa_5l",
+  "garrafa_20l",
+  "tampa",
+  "alca",
+];
+
+// categoria e densidade: undefined = não alterar. categoria null = remover.
+// densidade só é aplicada por administradores, via confirmarDensidade.
 export async function updateInsumo(
   id: string,
   nome: string,
   unidade: string,
   estoque_seguranca: number,
   custo_unitario?: number,
-  custo_unidade?: string
+  custo_unidade?: string,
+  categoria?: string | null,
+  densidade?: number | null
 ): Promise<void> {
+  if (categoria !== undefined && categoria !== null && !CATEGORIAS_VALIDAS.includes(categoria)) {
+    throw new Error("Categoria inválida.");
+  }
   const supabase = await createClient();
   const user = await getCurrentUser();
+  const isAdmin = (await getUserRole()) === "admin";
+  if (isAdmin && densidade != null && (!Number.isFinite(densidade) || densidade <= 0)) {
+    throw new Error("Densidade inválida: deve ser maior que zero.");
+  }
   const { error } = await supabase
     .from("insumos")
-    .update({ nome, unidade, estoque_seguranca })
+    .update({
+      nome,
+      unidade,
+      estoque_seguranca,
+      ...(categoria !== undefined ? { categoria } : {}),
+    })
     .eq("id", id);
   if (error) throw new Error(error.message);
+  if (isAdmin && densidade != null) {
+    const { data: atual, error: atualError } = await supabase
+      .from("insumos")
+      .select("densidade")
+      .eq("id", id)
+      .single();
+    if (atualError) throw new Error(atualError.message);
+    if (atual.densidade !== densidade) await confirmarDensidade(id, densidade);
+  }
   // Custos só são gravados por administradores; para os demais são ignorados
   if (custo_unitario !== undefined && (await getUserRole()) === "admin") {
     await writeCusto(supabase, id, custo_unitario, custo_unidade);

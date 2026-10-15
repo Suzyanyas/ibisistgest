@@ -8,7 +8,10 @@ import type { Tables } from "@/types/supabase";
 
 export type FormulaRow = Tables<"formulas">;
 
-export type InsumoBasic = Pick<Tables<"insumos">, "id" | "nome" | "unidade">;
+export type InsumoBasic = Pick<
+  Tables<"insumos">,
+  "id" | "nome" | "unidade" | "estoque_atual" | "densidade"
+>;
 
 export type FormulaInsumoRow = Tables<"formula_insumos"> & {
   insumos: { nome: string; unidade: string; custo_unitario: number | null; custo_unidade: string | null } | null;
@@ -255,7 +258,7 @@ export async function getInsumosList(): Promise<InsumoBasic[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("insumos")
-    .select("id, nome, unidade")
+    .select("id, nome, unidade, estoque_atual, densidade")
     .order("nome");
   if (error) throw new Error(error.message);
   return data ?? [];

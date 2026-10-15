@@ -19,6 +19,7 @@ import {
   type InsumoBasic,
 } from "@/app/actions/formulas";
 import { updateCustoInsumo } from "@/app/actions/insumos";
+import { getUnidadesCompativeis, converterUnidade } from "@/lib/unidades";
 
 type ModalType = null | "nova" | "editar" | "duplicar" | "addInsumo" | "excluir" | "editInsumo" | "removeInsumo";
 
@@ -33,12 +34,54 @@ type DuplicarInsumoRow = {
 const RENDIMENTO_UNIDADES = ["L", "KG", "UN"];
 const INSUMO_UNIDADES = ["KG", "L", "G", "ML", "PCT", "UN"];
 
-function getUnidadesCompativeis(insumoUnidade: string): string[] {
-  if (insumoUnidade === "KG" || insumoUnidade === "G") return ["KG", "G"];
-  if (insumoUnidade === "L" || insumoUnidade === "ML") return ["L", "ML"];
-  if (insumoUnidade === "UN") return ["UN"];
-  if (insumoUnidade === "PCT") return ["PCT"];
-  return INSUMO_UNIDADES;
+// Avisos não bloqueantes para uma linha de insumo (estoque e rendimento).
+// ins é opcional: sem ele só o aviso de rendimento pode ser calculado.
+function avisosInsumo(
+  quantidade: string,
+  unidade: string,
+  ins: InsumoBasic | undefined,
+  rendimento: number | null,
+  rendimentoUnidade: string | null,
+  comEstoque: boolean
+): string[] {
+  const qtd = parseFloat(quantidade.replace(",", "."));
+  if (isNaN(qtd) || qtd <= 0) return [];
+  const avisos: string[] = [];
+
+  if (comEstoque && ins) {
+    const convertida = converterUnidade(qtd, unidade, ins.unidade, ins.densidade);
+    if (convertida === null) avisos.push("unidade incompatível");
+    else if (convertida > ins.estoque_atual)
+      avisos.push(`Quantidade maior que o estoque (${ins.estoque_atual} ${ins.unidade}).`);
+  }
+
+  const u = unidade.toUpperCase();
+  const rendU = rendimentoUnidade?.toUpperCase();
+  if (rendimento != null && (u === "KG" || u === "L") && (rendU === "L" || rendU === "ML")) {
+    // Compara em litros; KG sem densidade é tratado como 1 kg ≈ 1 L (só para detetar erros de unidade)
+    const emLitros = u === "L" ? qtd : (converterUnidade(qtd, "KG", "L", ins?.densidade) ?? qtd);
+    const rendLitros = rendU === "ML" ? rendimento / 1000 : rendimento;
+    if (emLitros > rendLitros)
+      avisos.push("Quantidade muito acima do rendimento da fórmula. Confirme a unidade.");
+  }
+  return avisos;
+}
+
+function Avisos({ avisos }: { avisos: string[] }) {
+  if (avisos.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      {avisos.map((a) => (
+        <p
+          key={a}
+          className="text-xs rounded px-2 py-1"
+          style={{ backgroundColor: "#FEF3C7", color: "#B45309" }}
+        >
+          {a}
+        </p>
+      ))}
+    </div>
+  );
 }
 
 function isFraganciaInsumo(nome: string): boolean {
@@ -259,6 +302,19 @@ export default function FormulasClient({
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(true);
 
+  // Save pending (evita duplo clique em SALVAR)
+  const [saving, setSaving] = useState(false);
+  const busy = isPending || saving;
+  async function comSalvando(fn: () => Promise<void>) {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await fn();
+    } finally {
+      setSaving(false);
+    }
+  }
+
   // ── Helpers ──
 
   function refresh() {
@@ -394,7 +450,7 @@ export default function FormulasClient({
     setModal("excluir");
   }
 
-  function openEditInsumo(fi: FormulaInsumoRow) {
+  async function openEditInsumo(fi: FormulaInsumoRow) {
     setTargetInsumo(fi);
     setEditInsQtd(String(fi.quantidade));
     setEditInsUnidade(fi.unidade);
@@ -402,6 +458,12 @@ export default function FormulasClient({
     setPinError(null);
     setModalError(null);
     setModal("editInsumo");
+    // A densidade do insumo define as unidades compatíveis
+    try {
+      setInsumosList(await getInsumosList());
+    } catch (e) {
+      setModalError(e instanceof Error ? e.message : "Erro ao carregar insumos.");
+    }
   }
 
   function openRemoveInsumo(fi: FormulaInsumoRow) {
@@ -1009,9 +1071,9 @@ export default function FormulasClient({
             <ErrorMsg msg={modalError} />
             <ModalActions
               onCancel={closeModal}
-              onSave={handleSaveNova}
-              saveLabel={isPending ? "Salvando..." : "SALVAR"}
-              disabled={isPending}
+              onSave={() => comSalvando(handleSaveNova)}
+              saveLabel={busy ? "Salvando..." : "SALVAR"}
+              disabled={busy}
             />
           </div>
         </Modal>
@@ -1025,9 +1087,9 @@ export default function FormulasClient({
             <ErrorMsg msg={modalError} />
             <ModalActions
               onCancel={closeModal}
-              onSave={handleSaveEditar}
-              saveLabel={isPending ? "Salvando..." : "SALVAR"}
-              disabled={isPending}
+              onSave={() => comSalvando(handleSaveEditar)}
+              saveLabel={busy ? "Salvando..." : "SALVAR"}
+              disabled={busy}
             />
           </div>
         </Modal>
@@ -1096,6 +1158,15 @@ export default function FormulasClient({
                     <tbody>
                       {duplicarInsumos.map((row, idx) => {
                         const highlight = isFraganciaInsumo(row.insumo_nome);
+                        const rowIns = insumosList.find((i) => i.id === row.insumo_id);
+                        const avisos = avisosInsumo(
+                          row.quantidade,
+                          row.unidade,
+                          rowIns,
+                          detail.rendimento,
+                          detail.rendimento_unidade,
+                          true
+                        );
                         return (
                           <tr
                             key={row.isNew ? `novo-${idx}` : row.insumo_id}
@@ -1125,10 +1196,11 @@ export default function FormulasClient({
                                 {row.isNew && <option value="">Selecione...</option>}
                                 {insumosList.map((ins) => (
                                   <option key={ins.id} value={ins.id}>
-                                    {ins.nome}
+                                    {ins.nome} — estoque: {ins.estoque_atual} {ins.unidade}
                                   </option>
                                 ))}
                               </select>
+                              <Avisos avisos={avisos} />
                             </td>
                             <td className="px-3 py-2">
                               <input
@@ -1157,7 +1229,8 @@ export default function FormulasClient({
                                 }}
                               >
                                 {getUnidadesCompativeis(
-                                  insumosList.find((i) => i.id === row.insumo_id)?.unidade ?? row.unidade
+                                  rowIns?.unidade ?? row.unidade,
+                                  rowIns?.densidade
                                 ).map((u) => (
                                   <option key={u} value={u}>{u}</option>
                                 ))}
@@ -1194,7 +1267,7 @@ export default function FormulasClient({
               onCancel={closeModal}
               onSave={handleSaveDuplicar}
               saveLabel={dupSaving ? "Duplicando..." : "DUPLICAR"}
-              disabled={dupSaving}
+              disabled={dupSaving || isPending}
             />
           </div>
         </Modal>
@@ -1226,7 +1299,7 @@ export default function FormulasClient({
                     )}
                     {insumosList.map((ins) => (
                       <option key={ins.id} value={ins.id}>
-                        {ins.nome} ({ins.unidade})
+                        {ins.nome} ({ins.unidade}) — estoque: {ins.estoque_atual} {ins.unidade}
                       </option>
                     ))}
                   </select>
@@ -1249,7 +1322,8 @@ export default function FormulasClient({
                     onChange={(e) => setInsUnidade(e.target.value)}
                   >
                     {getUnidadesCompativeis(
-                      insumosList.find((i) => i.id === selInsumoId)?.unidade ?? ""
+                      insumosList.find((i) => i.id === selInsumoId)?.unidade ?? "",
+                      insumosList.find((i) => i.id === selInsumoId)?.densidade
                     ).map((u) => (
                       <option key={u} value={u}>
                         {u}
@@ -1257,14 +1331,24 @@ export default function FormulasClient({
                     ))}
                   </select>
                 </Field>
+                <Avisos
+                  avisos={avisosInsumo(
+                    insQtd,
+                    insUnidade,
+                    insumosList.find((i) => i.id === selInsumoId),
+                    detail?.rendimento ?? null,
+                    detail?.rendimento_unidade ?? null,
+                    true
+                  )}
+                />
               </>
             )}
             <ErrorMsg msg={modalError} />
             <ModalActions
               onCancel={closeModal}
-              onSave={handleAddInsumo}
-              saveLabel={isPending ? "Salvando..." : "SALVAR"}
-              disabled={isPending || insumosLoading}
+              onSave={() => comSalvando(handleAddInsumo)}
+              saveLabel={busy ? "Salvando..." : "SALVAR"}
+              disabled={busy || insumosLoading}
             />
           </div>
         </Modal>
@@ -1298,11 +1382,24 @@ export default function FormulasClient({
                 value={editInsUnidade}
                 onChange={(e) => setEditInsUnidade(e.target.value)}
               >
-                {getUnidadesCompativeis(targetInsumo.insumos?.unidade ?? "").map((u) => (
+                {getUnidadesCompativeis(
+                  targetInsumo.insumos?.unidade ?? "",
+                  insumosList.find((i) => i.id === targetInsumo.insumo_id)?.densidade
+                ).map((u) => (
                   <option key={u} value={u}>{u}</option>
                 ))}
               </select>
             </Field>
+            <Avisos
+              avisos={avisosInsumo(
+                editInsQtd,
+                editInsUnidade,
+                insumosList.find((i) => i.id === targetInsumo.insumo_id),
+                detail?.rendimento ?? null,
+                detail?.rendimento_unidade ?? null,
+                false
+              )}
+            />
             <Field label="PIN de confirmação">
               <input
                 className={inputCls}
@@ -1319,9 +1416,9 @@ export default function FormulasClient({
             <ErrorMsg msg={modalError} />
             <ModalActions
               onCancel={closeModal}
-              onSave={handleEditInsumo}
-              saveLabel="SALVAR"
-              disabled={isPending}
+              onSave={() => comSalvando(handleEditInsumo)}
+              saveLabel={busy ? "Salvando..." : "SALVAR"}
+              disabled={busy}
             />
           </div>
         </Modal>
