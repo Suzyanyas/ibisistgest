@@ -9,14 +9,22 @@ import type { RpcResultadoFalta } from "@/types/rpc";
 
 export type LoteRow = Tables<"lotes_producao">;
 export type LoteInsumoRow = Tables<"lote_insumos">;
-export type FormulaBasic = Pick<Tables<"formulas">, "id" | "nome" | "sigla">;
+export type FormulaBasic = Pick<
+  Tables<"formulas">,
+  "id" | "nome" | "sigla" | "rendimento" | "rendimento_unidade"
+>;
+
+export type InsumoEstoque = Pick<
+  Tables<"insumos">,
+  "id" | "nome" | "unidade" | "estoque_atual" | "densidade" | "tipo"
+>;
 
 export type LoteWithFormula = LoteRow & {
   formulas: Pick<Tables<"formulas">, "nome" | "sigla"> | null;
 };
 
 export type LoteInsumoWithInsumo = LoteInsumoRow & {
-  insumos: Pick<Tables<"insumos">, "nome" | "unidade"> | null;
+  insumos: Pick<Tables<"insumos">, "nome" | "unidade" | "densidade"> | null;
 };
 
 export type LoteWithDetails = LoteRow & {
@@ -29,7 +37,7 @@ export type FormulaInsumoPreview = {
   insumo_id: string;
   quantidade: number;
   unidade: string;
-  insumos: { nome: string; unidade: string } | null;
+  insumos: Omit<InsumoEstoque, "id"> | null;
 };
 
 export async function getLotesProducao(): Promise<LoteWithFormula[]> {
@@ -46,7 +54,7 @@ export async function getLoteWithInsumos(id: string): Promise<LoteWithDetails> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("lotes_producao")
-    .select("*, formulas(nome, sigla), lote_insumos(*, insumos(nome, unidade))")
+    .select("*, formulas(nome, sigla), lote_insumos(*, insumos(nome, unidade, densidade))")
     .eq("id", id)
     .single();
   if (error) throw new Error(error.message);
@@ -99,7 +107,7 @@ export async function deleteLote(id: string): Promise<void> {
   }
 
   const { error } = await supabase.from("lotes_producao").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw rpcError(error);
 }
 
 export async function addInsumoToLote(
@@ -118,7 +126,7 @@ export async function addInsumoToLote(
 export async function removeInsumoFromLote(id: string): Promise<void> {
   const supabase = await createClient();
   const { error } = await supabase.from("lote_insumos").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw rpcError(error);
 }
 
 export async function updateInsumoLote(
@@ -131,7 +139,7 @@ export async function updateInsumoLote(
     .from("lote_insumos")
     .update({ quantidade, unidade })
     .eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw rpcError(error);
 }
 
 export async function moverLoteParaEnvase(
@@ -163,7 +171,7 @@ export async function getFormulasList(): Promise<FormulaBasic[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("formulas")
-    .select("id, nome, sigla")
+    .select("id, nome, sigla, rendimento, rendimento_unidade")
     .order("nome");
   if (error) throw new Error(error.message);
   return data ?? [];
@@ -175,7 +183,9 @@ export async function getFormulaInsumos(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("formula_insumos")
-    .select("id, insumo_id, quantidade, unidade, insumos(nome, unidade)")
+    .select(
+      "id, insumo_id, quantidade, unidade, insumos(nome, unidade, estoque_atual, densidade, tipo)"
+    )
     .eq("formula_id", formula_id);
   if (error) throw new Error(error.message);
   return (data ?? []) as unknown as FormulaInsumoPreview[];
@@ -198,9 +208,14 @@ export async function updateLote(
   return data;
 }
 
-export async function getInsumosList(tipo?: "producao" | "material") {
+export async function getInsumosList(
+  tipo?: "producao" | "material"
+): Promise<InsumoEstoque[]> {
   const supabase = await createClient();
-  let query = supabase.from("insumos").select("id, nome, unidade").order("nome");
+  let query = supabase
+    .from("insumos")
+    .select("id, nome, unidade, estoque_atual, densidade, tipo")
+    .order("nome");
   if (tipo) query = query.eq("tipo", tipo);
   const { data, error } = await query;
   if (error) throw new Error(error.message);

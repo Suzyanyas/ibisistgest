@@ -22,8 +22,14 @@ import {
   type LoteInsumoWithInsumo,
   type FormulaBasic,
   type FormulaInsumoPreview,
+  type InsumoEstoque,
 } from "@/app/actions/producao";
 import type { FaltaItem } from "@/types/rpc";
+import {
+  getUnidadesCompativeis,
+  converterUnidade,
+  unidadeIncompativel,
+} from "@/lib/unidades";
 
 type ModalType =
   | null
@@ -33,18 +39,14 @@ type ModalType =
   | "excluirInsumo"
   | "excluirLote";
 
-type InsumoBasic = { id: string; nome: string; unidade: string };
-
 type EditableInsumo = { insumo_id: string; nome: string; quantidade: number; unidade: string };
 
-const INSUMO_UNIDADES = ["KG", "L", "G", "ML", "PCT", "UN"];
-
-function getUnidadesCompativeis(insumoUnidade: string): string[] {
-  if (insumoUnidade === "KG" || insumoUnidade === "G") return ["KG", "G"];
-  if (insumoUnidade === "L" || insumoUnidade === "ML") return ["L", "ML"];
-  if (insumoUnidade === "UN") return ["UN"];
-  if (insumoUnidade === "PCT") return ["PCT"];
-  return INSUMO_UNIDADES;
+function AmberWarning({ msg }: { msg: string }) {
+  return (
+    <p className="text-xs mt-1" style={{ color: "#B26A00" }}>
+      ⚠ {msg}
+    </p>
+  );
 }
 
 function todayStr() {
@@ -237,7 +239,8 @@ export default function ProducaoClient({
   const [previewLoading, setPreviewLoading] = useState(false);
 
   // Adicionar Insumo modal state
-  const [insumosList, setInsumosList] = useState<InsumoBasic[]>([]);
+  const [insumosList, setInsumosList] = useState<InsumoEstoque[]>([]);
+  const [modalSaving, setModalSaving] = useState(false);
   const [insumosLoading, setInsumosLoading] = useState(false);
   const [selInsumoId, setSelInsumoId] = useState("");
   const [insQtd, setInsQtd] = useState("");
@@ -262,6 +265,47 @@ export default function ProducaoClient({
   const [editFragrancia, setEditFragrancia] = useState("");
   const [loteEditSaving, setLoteEditSaving] = useState(false);
   const [loteEditError, setLoteEditError] = useState<string | null>(null);
+
+  // ── Nova Produção: validações e avisos (só pré-visualização; o servidor é quem decide) ──
+
+  const formulaSel = formulasList.find((f) => f.id === selFormulaId);
+  const novaRows: EditableInsumo[] = isAdmin
+    ? editableInsumos
+    : formulaInsumosPreview.map((fi) => ({
+        insumo_id: fi.insumo_id,
+        nome: fi.insumos?.nome ?? "—",
+        quantidade: fi.quantidade,
+        unidade: fi.unidade,
+      }));
+
+  function analisarLinha(row: EditableInsumo): { erro: string | null; avisos: string[] } {
+    const avisos: string[] = [];
+    if (!(row.quantidade > 0)) return { erro: "Quantidade deve ser maior que zero.", avisos };
+    const meta = formulaInsumosPreview.find((fi) => fi.insumo_id === row.insumo_id)?.insumos;
+    if (!meta) return { erro: null, avisos };
+
+    const base = meta.unidade;
+    const convertida = unidadeIncompativel(row.unidade, base, meta.densidade)
+      ? null
+      : converterUnidade(row.quantidade, row.unidade, base, meta.densidade);
+    if (convertida === null) {
+      avisos.push("unidade incompatível");
+      return { erro: null, avisos };
+    }
+    if (convertida > meta.estoque_atual) {
+      avisos.push(
+        `Estoque insuficiente: necessário ${convertida} ${base}, disponível ${meta.estoque_atual} ${base}.`
+      );
+    }
+    const rendUn = formulaSel?.rendimento_unidade?.toUpperCase();
+    if ((base === "KG" || base === "L") && (rendUn === "L" || rendUn === "ML")) {
+      const rendL = converterUnidade(formulaSel!.rendimento, rendUn, "L");
+      if (rendL !== null && convertida > rendL) {
+        avisos.push("Quantidade muito acima do rendimento da fórmula. Confirme a unidade.");
+      }
+    }
+    return { erro: null, avisos };
+  }
 
   // ── Helpers ──
 
@@ -403,7 +447,7 @@ export default function ProducaoClient({
     setModal("addInsumo");
     setInsumosLoading(true);
     try {
-      const list = await getInsumosList();
+      const list = await getInsumosList("producao");
       setInsumosList(list);
       if (list.length > 0) {
         setSelInsumoId(list[0].id);
@@ -447,6 +491,8 @@ export default function ProducaoClient({
     if (!selFormulaId) return setInlineError("Selecione uma fórmula.");
     if (!novoNumeroLote.trim()) return setInlineError("Número do lote é obrigatório.");
     if (!novoData) return setInlineError("Data é obrigatória.");
+    if (novaRows.some((r) => analisarLinha(r).erro))
+      return setInlineError("Corrija as quantidades dos insumos antes de iniciar.");
     setInlineError(null);
     setInlineSaving(true);
     try {
@@ -469,6 +515,7 @@ export default function ProducaoClient({
     const qtd = parseFloat(insQtd);
     if (isNaN(qtd) || qtd <= 0) return setModalError("Quantidade deve ser positiva.");
     setModalError(null);
+    setModalSaving(true);
     try {
       await addInsumoToLote(selectedId, selInsumoId, qtd, insUnidade);
       closeModal();
@@ -476,6 +523,8 @@ export default function ProducaoClient({
       await reloadDetail();
     } catch (e) {
       setModalError(e instanceof Error ? e.message : "Erro ao adicionar insumo.");
+    } finally {
+      setModalSaving(false);
     }
   }
 
@@ -778,9 +827,14 @@ export default function ProducaoClient({
                           </thead>
                           <tbody>
                             {isAdmin
-                              ? editableInsumos.map((item, idx) => (
+                              ? editableInsumos.map((item, idx) => {
+                                  const { erro, avisos } = analisarLinha(item);
+                                  return (
                                   <tr key={item.insumo_id} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
-                                    <td className="px-3 py-2 text-gray-700">{item.nome}</td>
+                                    <td className="px-3 py-2 text-gray-700">
+                                      {item.nome}
+                                      {avisos.map((a) => <AmberWarning key={a} msg={a} />)}
+                                    </td>
                                     <td className="px-3 py-2">
                                       <input
                                         type="text"
@@ -797,6 +851,7 @@ export default function ProducaoClient({
                                         className="border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-600"
                                         style={{ maxWidth: 100 }}
                                       />
+                                      {erro && <p className="text-xs text-red-600 mt-1">{erro}</p>}
                                     </td>
                                     <td className="px-3 py-2">
                                       <select
@@ -811,23 +866,40 @@ export default function ProducaoClient({
                                         }}
                                         className="border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-600"
                                       >
-                                        {getUnidadesCompativeis(
-                                          formulaInsumosPreview.find((fi) => fi.insumo_id === item.insumo_id)
-                                            ?.insumos?.unidade ?? item.unidade
-                                        ).map((u) => (
-                                          <option key={u} value={u}>{u}</option>
-                                        ))}
+                                        {(() => {
+                                          const meta = formulaInsumosPreview.find(
+                                            (fi) => fi.insumo_id === item.insumo_id
+                                          )?.insumos;
+                                          return getUnidadesCompativeis(
+                                            meta?.unidade ?? item.unidade,
+                                            meta?.densidade
+                                          ).map((u) => (
+                                            <option key={u} value={u}>{u}</option>
+                                          ));
+                                        })()}
                                       </select>
                                     </td>
                                   </tr>
-                                ))
-                              : formulaInsumosPreview.map((fi, idx) => (
+                                  );
+                                })
+                              : formulaInsumosPreview.map((fi, idx) => {
+                                  const { avisos } = analisarLinha({
+                                    insumo_id: fi.insumo_id,
+                                    nome: fi.insumos?.nome ?? "—",
+                                    quantidade: fi.quantidade,
+                                    unidade: fi.unidade,
+                                  });
+                                  return (
                                   <tr key={fi.id} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
-                                    <td className="px-3 py-2 text-gray-700">{fi.insumos?.nome ?? "—"}</td>
+                                    <td className="px-3 py-2 text-gray-700">
+                                      {fi.insumos?.nome ?? "—"}
+                                      {avisos.map((a) => <AmberWarning key={a} msg={a} />)}
+                                    </td>
                                     <td className="px-3 py-2 text-gray-600">{fi.quantidade}</td>
                                     <td className="px-3 py-2 text-gray-600">{fi.unidade}</td>
                                   </tr>
-                                ))
+                                  );
+                                })
                             }
                           </tbody>
                         </table>
@@ -843,7 +915,7 @@ export default function ProducaoClient({
 
                   <button
                     onClick={handleIniciarProducao}
-                    disabled={inlineSaving || formulasLoading}
+                    disabled={inlineSaving || isPending || formulasLoading}
                     style={{
                       backgroundColor: "#1565C0",
                       color: "white",
@@ -853,8 +925,8 @@ export default function ProducaoClient({
                       fontSize: 15,
                       width: "100%",
                       border: "none",
-                      cursor: inlineSaving ? "not-allowed" : "pointer",
-                      opacity: inlineSaving || formulasLoading ? 0.7 : 1,
+                      cursor: inlineSaving || isPending ? "not-allowed" : "pointer",
+                      opacity: inlineSaving || isPending || formulasLoading ? 0.7 : 1,
                       marginTop: 8,
                     }}
                   >
@@ -1000,13 +1072,15 @@ export default function ProducaoClient({
                     {actionLoading ? "Aguarde..." : "Mover para Envase"}
                   </button>
                 )}
-                <button
-                  onClick={openExcluirLote}
-                  className="px-3 py-1.5 rounded border border-red-300 text-sm font-semibold hover:bg-red-50 transition"
-                  style={{ color: "#C62828" }}
-                >
-                  Excluir Lote
-                </button>
+                {detail.status === "producao" && (
+                  <button
+                    onClick={openExcluirLote}
+                    className="px-3 py-1.5 rounded border border-red-300 text-sm font-semibold hover:bg-red-50 transition"
+                    style={{ color: "#C62828" }}
+                  >
+                    Excluir Lote
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1219,7 +1293,7 @@ export default function ProducaoClient({
                     )}
                     {insumosList.map((ins) => (
                       <option key={ins.id} value={ins.id}>
-                        {ins.nome} ({ins.unidade})
+                        {ins.nome} ({ins.unidade}) — estoque: {ins.estoque_atual} {ins.unidade}
                       </option>
                     ))}
                   </select>
@@ -1245,7 +1319,8 @@ export default function ProducaoClient({
                     onChange={(e) => setInsUnidade(e.target.value)}
                   >
                     {getUnidadesCompativeis(
-                      insumosList.find((i) => i.id === selInsumoId)?.unidade ?? ""
+                      insumosList.find((i) => i.id === selInsumoId)?.unidade ?? "",
+                      insumosList.find((i) => i.id === selInsumoId)?.densidade
                     ).map((u) => (
                       <option key={u} value={u}>
                         {u}
@@ -1259,8 +1334,8 @@ export default function ProducaoClient({
             <ModalActions
               onCancel={closeModal}
               onSave={handleAddInsumo}
-              saveLabel={isPending ? "Salvando..." : "SALVAR"}
-              disabled={isPending || insumosLoading}
+              saveLabel={isPending || modalSaving ? "Salvando..." : "SALVAR"}
+              disabled={isPending || modalSaving || insumosLoading}
             />
           </div>
         </Modal>
@@ -1294,7 +1369,10 @@ export default function ProducaoClient({
                 value={editInsUnidade}
                 onChange={(e) => setEditInsUnidade(e.target.value)}
               >
-                {getUnidadesCompativeis(targetInsumo.insumos?.unidade ?? "").map((u) => (
+                {getUnidadesCompativeis(
+                  targetInsumo.insumos?.unidade ?? "",
+                  targetInsumo.insumos?.densidade
+                ).map((u) => (
                   <option key={u} value={u}>
                     {u}
                   </option>
