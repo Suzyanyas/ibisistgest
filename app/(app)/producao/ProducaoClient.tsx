@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useTransition } from "react";
 import { Trash2, Pencil, AlertTriangle } from "lucide-react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getLotesProducao,
@@ -11,7 +12,7 @@ import {
   addInsumoToLote,
   removeInsumoFromLote,
   updateInsumoLote,
-  updateLoteStatus,
+  moverLoteParaEnvase,
   updateLote,
   getFormulasList,
   getFormulaInsumos,
@@ -22,9 +23,11 @@ import {
   type FormulaBasic,
   type FormulaInsumoPreview,
 } from "@/app/actions/producao";
+import type { FaltaItem } from "@/types/rpc";
 
 type ModalType =
   | null
+  | "faltaEstoque"
   | "addInsumo"
   | "editInsumo"
   | "excluirInsumo"
@@ -220,6 +223,7 @@ export default function ProducaoClient({
 
   const [modal, setModal] = useState<ModalType>(null);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [faltas, setFaltas] = useState<FaltaItem[]>([]);
 
   // Novo Lote modal state
   const [formulasList, setFormulasList] = useState<FormulaBasic[]>([]);
@@ -524,16 +528,39 @@ export default function ProducaoClient({
     }
   }
 
-  async function handleMoverEnvase() {
-    if (!selectedId) return;
+  async function executarMoverEnvase(confirmarFalta: boolean) {
+    if (!selectedId || actionLoading) return;
     setActionLoading(true);
+    let ok = false;
+    let novasFaltas: FaltaItem[] = [];
+    let erro: string | null = null;
     try {
-      await updateLoteStatus(selectedId, "envase");
-      router.push(`/envase?lote_id=${selectedId}`);
+      const r = await moverLoteParaEnvase(selectedId, confirmarFalta);
+      if (r.ok) ok = true;
+      else novasFaltas = r.faltas;
     } catch (e) {
-      setDetailError(e instanceof Error ? e.message : "Erro ao atualizar status.");
-      setActionLoading(false);
+      erro = e instanceof Error ? e.message : "Erro ao atualizar status.";
     }
+    // sucesso ou falha: o estado vem sempre do servidor
+    await refreshLotes();
+    await reloadDetail();
+    if (ok) {
+      closeModal();
+      router.push(`/envase?lote_id=${selectedId}`);
+      return;
+    }
+    if (erro === null) {
+      setFaltas(novasFaltas);
+      setModal("faltaEstoque");
+    } else {
+      closeModal();
+      setDetailError(erro);
+    }
+    setActionLoading(false);
+  }
+
+  function handleMoverEnvase() {
+    return executarMoverEnvase(false);
   }
 
   async function handleSaveLoteHeader() {
@@ -558,23 +585,6 @@ export default function ProducaoClient({
       setLoteEditError(e instanceof Error ? e.message : "Erro ao salvar.");
     } finally {
       setLoteEditSaving(false);
-    }
-  }
-
-  async function handleConcluir() {
-    if (!selectedId) return;
-    setActionLoading(true);
-    try {
-      await updateLoteStatus(selectedId, "concluido");
-      setLotes((prev) =>
-        prev.map((l) => (l.id === selectedId ? { ...l, status: "concluido" } : l))
-      );
-      refresh();
-      await reloadDetail();
-    } catch (e) {
-      setDetailError(e instanceof Error ? e.message : "Erro ao atualizar status.");
-    } finally {
-      setActionLoading(false);
     }
   }
 
@@ -1136,6 +1146,52 @@ export default function ProducaoClient({
           </div>
         )}
       </main>
+
+      {/* ── Modal: Estoque insuficiente ── */}
+      {modal === "faltaEstoque" && (
+        <Modal title="Estoque insuficiente" onClose={closeModal} danger>
+          <div className="flex flex-col gap-4">
+            <ul className="flex flex-col gap-2 text-sm text-gray-800">
+              {faltas.map((f) => (
+                <li key={f.insumo_id} className="rounded border border-gray-200 px-3 py-2">
+                  <strong>{f.nome}</strong>
+                  <div className="text-gray-600">
+                    Necessário: {f.necessario} {f.unidade} · Disponível: {f.disponivel} {f.unidade}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <p className="text-sm text-gray-700">
+              Se continuar, o estoque dos itens acima fica a zero e a falta fica registada.
+            </p>
+            <div className="flex gap-3 pt-2 justify-end flex-wrap">
+              {actionLoading ? (
+                <span
+                  className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm opacity-60"
+                  aria-disabled="true"
+                >
+                  Atualizar estoque
+                </span>
+              ) : (
+                <Link
+                  href="/estoque-insumos"
+                  className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
+                >
+                  Atualizar estoque
+                </Link>
+              )}
+              <button
+                onClick={() => executarMoverEnvase(true)}
+                disabled={actionLoading || isPending}
+                className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
+                style={{ backgroundColor: "#C62828" }}
+              >
+                {actionLoading ? "Aguarde..." : "Continuar mesmo assim"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* ── Modal: Adicionar Insumo ── */}
       {modal === "addInsumo" && (

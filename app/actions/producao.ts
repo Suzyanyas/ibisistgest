@@ -2,10 +2,10 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/app/actions/auth-role";
-import { logAtividade } from "@/app/actions/dashboard";
 import { rpcError } from "@/lib/supabase/rpc-error";
-import { convertToBaseUnit } from "@/app/actions/utils";
+import { revalidatePath } from "next/cache";
 import type { Tables } from "@/types/supabase";
+import type { RpcResultadoFalta } from "@/types/rpc";
 
 export type LoteRow = Tables<"lotes_producao">;
 export type LoteInsumoRow = Tables<"lote_insumos">;
@@ -134,82 +134,29 @@ export async function updateInsumoLote(
   if (error) throw new Error(error.message);
 }
 
-export async function updateLoteStatus(
-  id: string,
-  status: "producao" | "envase" | "concluido"
-): Promise<void> {
+export async function moverLoteParaEnvase(
+  loteId: string,
+  confirmarFalta: boolean
+): Promise<RpcResultadoFalta> {
   const supabase = await createClient();
   const user = await getCurrentUser();
-  const { error } = await supabase
-    .from("lotes_producao")
-    .update({ status })
-    .eq("id", id);
-  if (error) throw new Error(error.message);
+  // a função regista a atividade e os movimentos por conta própria
+  const { data, error } = await supabase.rpc("mover_lote_para_envase", {
+    p_lote_id: loteId,
+    p_confirmar_falta: confirmarFalta,
+    p_user_id: user?.id ?? null,
+    p_user_email: user?.email ?? null,
+  });
+  if (error) throw rpcError(error);
 
-  if (status === "envase") {
-    const { data: lote, error: loteError } = await supabase
-      .from("lotes_producao")
-      .select("numero_lote")
-      .eq("id", id)
-      .single();
-    if (loteError) throw new Error(loteError.message);
-
-    await logAtividade("Lote para envase", lote.numero_lote, user?.id, user?.email);
-
-    const { data: loteInsumos, error: liError } = await supabase
-      .from("lote_insumos")
-      .select("insumo_id, quantidade, unidade")
-      .eq("lote_id", id);
-    if (liError) throw new Error(liError.message);
-
-    if (loteInsumos && loteInsumos.length > 0) {
-      const today = new Date().toISOString().slice(0, 10);
-      const obs = `Produção lote ${lote.numero_lote}`;
-
-      for (const li of loteInsumos) {
-        const { data: insumo, error: insumoError } = await supabase
-          .from("insumos")
-          .select("estoque_atual, unidade")
-          .eq("id", li.insumo_id)
-          .single();
-        if (insumoError) throw new Error(insumoError.message);
-
-        const qtdConvertida = convertToBaseUnit(
-          li.quantidade,
-          li.unidade,
-          insumo.unidade
-        );
-
-        const novoEstoque = Math.max(0, (insumo.estoque_atual ?? 0) - qtdConvertida);
-
-        const { error: updateError } = await supabase
-          .from("insumos")
-          .update({ estoque_atual: novoEstoque })
-          .eq("id", li.insumo_id);
-        if (updateError) throw new Error(updateError.message);
-
-        const { error: movError } = await supabase
-          .from("insumo_movimentos")
-          .insert({
-            insumo_id: li.insumo_id,
-            tipo: "saida",
-            quantidade: qtdConvertida,
-            data: today,
-            obs,
-          });
-        if (movError) throw new Error(movError.message);
-      }
-    }
-  } else if (status === "concluido") {
-    const { data: lote, error: loteError } = await supabase
-      .from("lotes_producao")
-      .select("numero_lote")
-      .eq("id", id)
-      .single();
-    if (loteError) throw new Error(loteError.message);
-
-    await logAtividade("Lote concluído", lote.numero_lote, user?.id, user?.email);
+  const resultado = data as unknown as RpcResultadoFalta;
+  if (resultado.ok) {
+    revalidatePath("/");
+    revalidatePath("/producao");
+    revalidatePath("/envase");
+    revalidatePath("/estoque-insumos");
   }
+  return resultado;
 }
 
 export async function getFormulasList(): Promise<FormulaBasic[]> {
