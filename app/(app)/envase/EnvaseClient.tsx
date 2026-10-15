@@ -6,28 +6,39 @@ import { useSearchParams } from "next/navigation";
 import {
   getEnvaseByLote,
   saveEnvase,
-  concluirEnvase,
+  concluirEnvaseV2,
   getHistoricoEnvases,
   getLoteInsumos,
-  getEstoqueEmbalagens,
-  getEmbalagensDisponiveisEnvase,
+  getLotesEnvase,
+  getEmbalagensDisponiveis,
+  getProdutosDestino,
   type LoteEnvaseWithFormula,
-  type EnvaseRow,
   type HistoricoEnvaseItem,
   type LoteInsumoItem,
-  type EstoqueEmbalagemItem,
-  type EmbalagensDisponiveisEnvase,
-  type EmbalagemSelecoes,
+  type EmbalagemDisponivel,
+  type ProdutoDestino,
+  type TamanhoEnvase,
 } from "@/app/actions/envase";
+import type { FaltaItem } from "@/types/rpc";
 
-const TAMANHOS = ["1L", "2L", "5L", "20L"] as const;
+const TAMANHOS: {
+  key: TamanhoEnvase;
+  label: string;
+  nomeCompleto: string;
+  litros: number;
+  categoria: string;
+}[] = [
+  { key: "200ML", label: "200 ML", nomeCompleto: "200 ML", litros: 0.2, categoria: "garrafa_200ml" },
+  { key: "500ML", label: "500 ML", nomeCompleto: "500 ML", litros: 0.5, categoria: "garrafa_500ml" },
+  { key: "1L", label: "1L", nomeCompleto: "1 LITRO", litros: 1, categoria: "garrafa_1l" },
+  { key: "2L", label: "2L", nomeCompleto: "2 LITROS", litros: 2, categoria: "garrafa_2l" },
+  { key: "5L", label: "5L", nomeCompleto: "5 LITROS", litros: 5, categoria: "garrafa_5l" },
+  { key: "20L", label: "20L", nomeCompleto: "20 LITROS", litros: 20, categoria: "garrafa_20l" },
+];
 
-const TAMANHO_PARA_CATEGORIA_GARRAFA: Record<string, keyof EmbalagensDisponiveisEnvase> = {
-  "1L": "garrafa_1l",
-  "2L": "garrafa_2l",
-  "5L": "garrafa_5l",
-  "20L": "garrafa_20l",
-};
+const NOVO_PRODUTO = "__novo__";
+
+type Quantidades = Record<TamanhoEnvase, number>;
 
 type EmbalagemTamanhoState = {
   garrafa_id: string | null;
@@ -35,11 +46,13 @@ type EmbalagemTamanhoState = {
   alca_id: string | null;
 };
 
-const EMBALAGEM_STATE_VAZIO: EmbalagemTamanhoState = {
-  garrafa_id: null,
-  tampa_id: null,
-  alca_id: null,
-};
+const QTD_VAZIA: Quantidades = { "200ML": 0, "500ML": 0, "1L": 0, "2L": 0, "5L": 0, "20L": 0 };
+
+function embalagemVazia(): Record<TamanhoEnvase, EmbalagemTamanhoState> {
+  const initial = {} as Record<TamanhoEnvase, EmbalagemTamanhoState>;
+  for (const t of TAMANHOS) initial[t.key] = { garrafa_id: null, tampa_id: null, alca_id: null };
+  return initial;
+}
 
 const selectCls =
   "border border-gray-200 rounded-lg px-2 py-1.5 w-full focus:outline-none focus:ring-2 focus:ring-blue-600";
@@ -111,25 +124,20 @@ export default function EnvaseClient({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [qtd1l, setQtd1l] = useState(0);
-  const [qtd2l, setQtd2l] = useState(0);
-  const [qtd5l, setQtd5l] = useState(0);
-  const [qtd20l, setQtd20l] = useState(0);
+  const [qtds, setQtds] = useState<Quantidades>({ ...QTD_VAZIA });
   const [dataEnvase, setDataEnvase] = useState(nowStr());
 
-  const [estoqueEmbalagens, setEstoqueEmbalagens] = useState<Record<string, EstoqueEmbalagemItem>>({});
-
-  const [embalagensDisponiveis, setEmbalagensDisponiveis] = useState<EmbalagensDisponiveisEnvase | null>(null);
-  const [embalagemState, setEmbalagemState] = useState<Record<string, EmbalagemTamanhoState>>(() => {
-    const initial: Record<string, EmbalagemTamanhoState> = {};
-    for (const t of TAMANHOS) initial[t] = { ...EMBALAGEM_STATE_VAZIO };
-    return initial;
-  });
+  const [embalagens, setEmbalagens] = useState<EmbalagemDisponivel[]>([]);
+  const [embalagemState, setEmbalagemState] = useState(embalagemVazia);
+  const [produtos, setProdutos] = useState<ProdutoDestino[]>([]);
+  const [produtoDestino, setProdutoDestino] = useState("");
+  const [novoProdutoNome, setNovoProdutoNome] = useState("");
+  const [faltas, setFaltas] = useState<FaltaItem[] | null>(null);
 
   useEffect(() => {
-    getEmbalagensDisponiveisEnvase()
-      .then(setEmbalagensDisponiveis)
-      .catch(() => setEmbalagensDisponiveis(null));
+    getEmbalagensDisponiveis()
+      .then(setEmbalagens)
+      .catch(() => setEmbalagens([]));
   }, []);
 
   const [insumosOpen, setInsumosOpen] = useState(false);
@@ -137,30 +145,22 @@ export default function EnvaseClient({
   const [insumosLoading, setInsumosLoading] = useState(false);
 
   const [formLoading, setFormLoading] = useState(false);
-  const [saveLoading, setSaveLoading] = useState(false);
-  const [concluirLoading, setConcluirLoading] = useState(false);
+  const [pending, setPending] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [hasSaved, setHasSaved] = useState(false);
-  const [showConfirmConcluir, setShowConfirmConcluir] = useState(false);
 
   const selectedLote = lotes.find((l) => l.id === selectedId) ?? null;
 
   const resetForm = useCallback(() => {
-    setQtd1l(0);
-    setQtd2l(0);
-    setQtd5l(0);
-    setQtd20l(0);
+    setQtds({ ...QTD_VAZIA });
     setDataEnvase(nowStr());
     setSuccessMsg(null);
     setErrorMsg(null);
-    setHasSaved(false);
-    setEstoqueEmbalagens({});
-    setEmbalagemState(() => {
-      const initial: Record<string, EmbalagemTamanhoState> = {};
-      for (const t of TAMANHOS) initial[t] = { ...EMBALAGEM_STATE_VAZIO };
-      return initial;
-    });
+    setEmbalagemState(embalagemVazia());
+    setProdutos([]);
+    setProdutoDestino("");
+    setNovoProdutoNome("");
+    setFaltas(null);
   }, []);
 
   const loadEnvase = useCallback(
@@ -168,20 +168,25 @@ export default function EnvaseClient({
       setFormLoading(true);
       resetForm();
       try {
-        const [existing, estoque] = await Promise.all([
+        const [existing, destinos] = await Promise.all([
           getEnvaseByLote(lote_id),
-          getEstoqueEmbalagens(),
+          getProdutosDestino(lote_id),
         ]);
+        setProdutos(destinos);
         if (existing) {
-          setQtd1l(existing.qtd_1l ?? 0);
-          setQtd2l(existing.qtd_2l ?? 0);
-          setQtd5l(existing.qtd_5l ?? 0);
-          setQtd20l(existing.qtd_20l ?? 0);
+          setQtds({
+            "200ML": existing.qtd_200ml ?? 0,
+            "500ML": existing.qtd_500ml ?? 0,
+            "1L": existing.qtd_1l ?? 0,
+            "2L": existing.qtd_2l ?? 0,
+            "5L": existing.qtd_5l ?? 0,
+            "20L": existing.qtd_20l ?? 0,
+          });
           setDataEnvase(existing.data_envase ? existing.data_envase.slice(0, 16) : nowStr());
+          if (existing.produto_acabado_id && destinos.some((d) => d.id === existing.produto_acabado_id)) {
+            setProdutoDestino(existing.produto_acabado_id);
+          }
         }
-        const byTamanho: Record<string, EstoqueEmbalagemItem> = {};
-        for (const item of estoque) byTamanho[item.tamanho] = item;
-        setEstoqueEmbalagens(byTamanho);
       } catch (e) {
         setErrorMsg(e instanceof Error ? e.message : "Erro ao carregar envase.");
       } finally {
@@ -200,35 +205,115 @@ export default function EnvaseClient({
     }
   }, [selectedId, loadEnvase, resetForm]);
 
-  async function handleSave() {
-    if (!selectedId) return;
-    setErrorMsg(null);
-    setSaveLoading(true);
+  async function recarregarLotes() {
     try {
-      await saveEnvase(selectedId, qtd1l, qtd2l, qtd5l, qtd20l, dataEnvase);
-      setHasSaved(true);
-      setSuccessMsg("Envase salvo!");
-      setTimeout(() => setSuccessMsg(null), 2000);
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Erro ao salvar.");
-    } finally {
-      setSaveLoading(false);
+      const atualizados = await getLotesEnvase();
+      setLotes(atualizados);
+      if (selectedId && !atualizados.some((l) => l.id === selectedId)) {
+        setSelectedId(null);
+      }
+    } catch {
+      // mantém a lista atual se a recarga falhar
     }
   }
 
-  async function handleConcluir() {
+  async function handleSave() {
     if (!selectedId) return;
     setErrorMsg(null);
-    setConcluirLoading(true);
+    setPending(true);
     try {
-      await concluirEnvase(selectedId, embalagemState as EmbalagemSelecoes);
-      setLotes((prev) => prev.filter((l) => l.id !== selectedId));
-      setSelectedId(null);
+      const r = await saveEnvase(
+        selectedId,
+        qtds["200ML"],
+        qtds["500ML"],
+        qtds["1L"],
+        qtds["2L"],
+        qtds["5L"],
+        qtds["20L"],
+        dataEnvase
+      );
+      if (r.ok) {
+        setSuccessMsg("Envase salvo!");
+        setTimeout(() => setSuccessMsg(null), 2000);
+      } else {
+        setErrorMsg(r.error);
+      }
     } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Erro ao salvar.");
+    } finally {
+      setPending(false);
+      await recarregarLotes();
+    }
+  }
+
+  async function handleConcluir(confirmar_falta: boolean) {
+    if (!selectedId) return;
+    setErrorMsg(null);
+
+    const novo = produtoDestino === NOVO_PRODUTO;
+    if (!produtoDestino) {
+      setErrorMsg("Selecione o produto de destino.");
+      return;
+    }
+    if (novo && !novoProdutoNome.trim()) {
+      setErrorMsg("Informe o nome do novo produto.");
+      return;
+    }
+    for (const t of TAMANHOS) {
+      if (qtds[t.key] <= 0) continue;
+      const sel = embalagemState[t.key];
+      if (!sel.garrafa_id) {
+        setErrorMsg(`Selecione a garrafa para ${t.label}.`);
+        return;
+      }
+      if (!sel.tampa_id) {
+        setErrorMsg(`Selecione a tampa para ${t.label}.`);
+        return;
+      }
+    }
+
+    setPending(true);
+    try {
+      const r = await concluirEnvaseV2({
+        lote_id: selectedId,
+        qtd_200ml: qtds["200ML"],
+        qtd_500ml: qtds["500ML"],
+        qtd_1l: qtds["1L"],
+        qtd_2l: qtds["2L"],
+        qtd_5l: qtds["5L"],
+        qtd_20l: qtds["20L"],
+        data_envase: dataEnvase,
+        produto_acabado_id: novo ? null : produtoDestino,
+        novo_produto_nome: novo ? novoProdutoNome.trim() : null,
+        embalagens: TAMANHOS.filter((t) => qtds[t.key] > 0).map((t) => ({
+          tamanho: t.key,
+          garrafa_id: embalagemState[t.key].garrafa_id,
+          tampa_id: embalagemState[t.key].tampa_id,
+          alca_id: embalagemState[t.key].alca_id,
+        })),
+        confirmar_falta,
+      });
+      if (r.ok) {
+        setFaltas(null);
+        setSelectedId(null);
+      } else if ("faltas" in r) {
+        setFaltas(r.faltas);
+      } else {
+        setFaltas(null);
+        setErrorMsg(r.error);
+      }
+    } catch (e) {
+      setFaltas(null);
       setErrorMsg(e instanceof Error ? e.message : "Erro ao concluir lote.");
     } finally {
-      setConcluirLoading(false);
+      setPending(false);
+      await recarregarLotes();
     }
+  }
+
+  function nomeProdutoDestino(): string {
+    if (produtoDestino === NOVO_PRODUTO) return novoProdutoNome.trim() || "—";
+    return produtos.find((p) => p.id === produtoDestino)?.nome ?? "—";
   }
 
   async function generateEtiquetasPDF() {
@@ -236,7 +321,7 @@ export default function EnvaseClient({
     const { default: jsPDF } = await import("jspdf");
     const JsBarcode = (await import("jsbarcode")).default;
 
-    const produtoNome = selectedLote.formulas?.nome ?? "—";
+    const produtoNome = nomeProdutoDestino();
     const numeroLote = selectedLote.numero_lote;
     const fragancia = selectedLote.fragancia;
 
@@ -245,13 +330,6 @@ export default function EnvaseClient({
     dataValidade.setMonth(dataValidade.getMonth() + 18);
     const fabStr = formatDateDDMMYYYY(dataProducao);
     const valStr = formatDateDDMMYYYY(dataValidade);
-
-    const tamanhos: { label: string; qtd: number }[] = [
-      { label: "1L", qtd: qtd1l },
-      { label: "2L", qtd: qtd2l },
-      { label: "5L", qtd: qtd5l },
-      { label: "20L", qtd: qtd20l },
-    ];
 
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: [80, 20] });
     let firstPage = true;
@@ -265,15 +343,8 @@ export default function EnvaseClient({
       return truncated + "...";
     }
 
-    const tamanhoNomeCompleto: Record<string, string> = {
-      "1L": "1 LITRO",
-      "2L": "2 LITROS",
-      "5L": "5 LITROS",
-      "20L": "20 LITROS",
-    };
-
-    function drawLabel(xOffset: number, tamanho: string) {
-      const barcodeValue = `${produtoNome} ${tamanho}`;
+    function drawLabel(xOffset: number, tamanho: { label: string; nomeCompleto: string }) {
+      const barcodeValue = `${produtoNome} ${tamanho.label}`;
       const canvas = document.createElement("canvas");
       JsBarcode(canvas, barcodeValue, { format: "CODE128", displayValue: false });
       const barcodeData = canvas.toDataURL("image/png");
@@ -284,7 +355,7 @@ export default function EnvaseClient({
 
       doc.setFont("helvetica", "bold");
       doc.setFontSize(5);
-      const linha1 = `${produtoNome} ${tamanhoNomeCompleto[tamanho] ?? tamanho}`.toUpperCase();
+      const linha1 = `${produtoNome} ${tamanho.nomeCompleto}`.toUpperCase();
       doc.text(truncateToWidth(linha1, maxWidth), xOffset + 1, y);
       y += 2;
 
@@ -299,36 +370,24 @@ export default function EnvaseClient({
       }
     }
 
-    for (const { label, qtd } of tamanhos) {
+    for (const tamanho of TAMANHOS) {
+      const qtd = qtds[tamanho.key];
       if (qtd <= 0) continue;
       let remaining = qtd;
       while (remaining > 0) {
         if (!firstPage) doc.addPage([80, 20], "landscape");
         firstPage = false;
 
-        drawLabel(0, label);
+        drawLabel(0, tamanho);
         remaining -= 1;
         if (remaining > 0) {
-          drawLabel(40, label);
+          drawLabel(40, tamanho);
           remaining -= 1;
         }
       }
     }
 
     doc.save(`etiquetas-${numeroLote}.pdf`);
-  }
-
-  function handleConcluirClick() {
-    if (!hasSaved) {
-      setShowConfirmConcluir(true);
-      return;
-    }
-    handleConcluir();
-  }
-
-  function handleConfirmConcluirMesmoAssim() {
-    setShowConfirmConcluir(false);
-    handleConcluir();
   }
 
   async function handleToggleInsumos() {
@@ -348,9 +407,20 @@ export default function EnvaseClient({
     setInsumosOpen((o) => !o);
   }
 
-  const totalUnidades = qtd1l + qtd2l + qtd5l + qtd20l;
-  const atLeastOneQtd = qtd1l > 0 || qtd2l > 0 || qtd5l > 0 || qtd20l > 0;
-  const rendimentoReal = qtd1l * 1 + qtd2l * 2 + qtd5l * 5 + qtd20l * 20;
+  const totalUnidades = TAMANHOS.reduce((acc, t) => acc + qtds[t.key], 0);
+  const atLeastOneQtd = totalUnidades > 0;
+  const rendimentoReal =
+    Math.round(TAMANHOS.reduce((acc, t) => acc + qtds[t.key] * t.litros, 0) * 1000) / 1000;
+
+  // Quantidade necessária por embalagem somando todos os tamanhos (a mesma tampa pode servir vários)
+  const necessarioPorInsumo: Record<string, number> = {};
+  for (const t of TAMANHOS) {
+    if (qtds[t.key] <= 0) continue;
+    const sel = embalagemState[t.key];
+    for (const id of [sel.garrafa_id, sel.tampa_id, sel.alca_id]) {
+      if (id) necessarioPorInsumo[id] = (necessarioPorInsumo[id] ?? 0) + qtds[t.key];
+    }
+  }
 
   async function handleSelectHistorico() {
     setActiveTab("historico");
@@ -557,117 +627,121 @@ export default function EnvaseClient({
                 </div>
 
                 {/* Quantity grid */}
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-4">
-                  {[
-                    { label: "1L", value: qtd1l, set: setQtd1l },
-                    { label: "2L", value: qtd2l, set: setQtd2l },
-                    { label: "5L", value: qtd5l, set: setQtd5l },
-                    { label: "20L", value: qtd20l, set: setQtd20l },
-                  ].map(({ label, value, set }) => {
-                    const estoque = estoqueEmbalagens[label];
-                    const insuficiente = estoque && value > estoque.estoque_atual;
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 mb-4">
+                  {TAMANHOS.map((t) => {
+                    const value = qtds[t.key];
+                    const sel = embalagemState[t.key];
+                    const garrafas = embalagens.filter((i) => i.categoria === t.categoria);
+                    const tampas = embalagens.filter((i) => i.categoria === "tampa");
+                    const alcas = embalagens.filter((i) => i.categoria === "alca");
+                    const escolhidos = [sel.garrafa_id, sel.tampa_id, sel.alca_id]
+                      .filter((id): id is string => !!id)
+                      .map((id) => embalagens.find((i) => i.id === id))
+                      .filter((i): i is EmbalagemDisponivel => !!i)
+                      .filter((i) => (necessarioPorInsumo[i.id] ?? 0) > i.estoque_atual);
+                    const setSel = (campo: keyof EmbalagemTamanhoState, id: string) =>
+                      setEmbalagemState((prev) => ({
+                        ...prev,
+                        [t.key]: { ...prev[t.key], [campo]: id || null },
+                      }));
+                    const optionLabel = (i: EmbalagemDisponivel) => `${i.nome} (${i.estoque_atual} ${i.unidade})`;
                     return (
                       <div
-                        key={label}
+                        key={t.key}
                         className="qty-card flex flex-col gap-2 bg-white p-4"
                         style={{ border: "1px solid #e5e7eb", borderRadius: 12, boxShadow: "0 2px 8px rgba(21,101,192,0.08)" }}
                       >
-                        <span style={{ fontWeight: 800, fontSize: 20, color: "#1565C0" }}>{label}</span>
+                        <span style={{ fontWeight: 800, fontSize: 20, color: "#1565C0" }}>{t.label}</span>
                         <input
                           className={inputCls}
                           type="number"
                           min={0}
                           step={1}
                           value={value}
-                          onChange={(e) => {
-                            set(Math.max(0, Number(e.target.value)));
-                            setHasSaved(false);
-                          }}
+                          onChange={(e) =>
+                            setQtds((prev) => ({
+                              ...prev,
+                              [t.key]: Math.max(0, Math.floor(Number(e.target.value)) || 0),
+                            }))
+                          }
                           style={{ fontSize: 18, fontWeight: 600, textAlign: "center" }}
                         />
-                        {!estoque && (
-                          <p className="text-xs" style={{ color: "#9E9E9E" }}>
-                            Embalagem não configurada
-                          </p>
-                        )}
-                        {insuficiente && (
-                          <p style={{ color: "#E65100", fontSize: 11 }}>
-                            ⚠ Estoque insuficiente: {estoque.estoque_atual} disponíveis
-                            <br />
-                            <Link
-                              href="/estoque-insumos"
-                              className="hover:underline"
-                              style={{ color: "#E65100", fontWeight: 600, whiteSpace: "nowrap" }}
-                            >
-                              Atualizar estoque →
-                            </Link>
-                          </p>
-                        )}
-                        {value > 0 && embalagensDisponiveis && (
+                        {value > 0 && (
                           <div className="flex flex-col gap-2 mt-1">
                             <div>
-                              <div style={{ fontSize: 11, color: "#6B7A99" }}>Garrafa</div>
-                              <select
-                                className={selectCls}
-                                style={{ fontSize: 13 }}
-                                value={embalagemState[label]?.garrafa_id ?? ""}
-                                onChange={(e) =>
-                                  setEmbalagemState((prev) => ({
-                                    ...prev,
-                                    [label]: { ...prev[label], garrafa_id: e.target.value || null },
-                                  }))
-                                }
-                              >
-                                <option value="">- Sem Garrafa -</option>
-                                {embalagensDisponiveis[TAMANHO_PARA_CATEGORIA_GARRAFA[label]].map((i) => (
-                                  <option key={i.id} value={i.id}>
-                                    {i.nome} ({i.estoque_atual} UN)
-                                  </option>
-                                ))}
-                              </select>
+                              <div style={{ fontSize: 11, color: "#6B7A99" }}>Garrafa *</div>
+                              {garrafas.length === 0 ? (
+                                <p style={{ fontSize: 11, color: "#E65100" }}>
+                                  Cadastre a garrafa de {t.label} no Estoque (categoria Garrafa {t.label}){" "}
+                                  <Link href="/estoque-insumos" className="hover:underline" style={{ fontWeight: 600 }}>
+                                    Ir para o Estoque →
+                                  </Link>
+                                </p>
+                              ) : (
+                                <select
+                                  className={selectCls}
+                                  style={{ fontSize: 13 }}
+                                  required
+                                  value={sel.garrafa_id ?? ""}
+                                  onChange={(e) => setSel("garrafa_id", e.target.value)}
+                                >
+                                  <option value="">- Selecione -</option>
+                                  {garrafas.map((i) => (
+                                    <option key={i.id} value={i.id}>
+                                      {optionLabel(i)}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
                             </div>
                             <div>
-                              <div style={{ fontSize: 11, color: "#6B7A99" }}>Tampa</div>
-                              <select
-                                className={selectCls}
-                                style={{ fontSize: 13 }}
-                                value={embalagemState[label]?.tampa_id ?? ""}
-                                onChange={(e) =>
-                                  setEmbalagemState((prev) => ({
-                                    ...prev,
-                                    [label]: { ...prev[label], tampa_id: e.target.value || null },
-                                  }))
-                                }
-                              >
-                                <option value="">- Sem Tampa -</option>
-                                {embalagensDisponiveis.tampa.map((i) => (
-                                  <option key={i.id} value={i.id}>
-                                    {i.nome} ({i.estoque_atual} UN)
-                                  </option>
-                                ))}
-                              </select>
+                              <div style={{ fontSize: 11, color: "#6B7A99" }}>Tampa *</div>
+                              {tampas.length === 0 ? (
+                                <p style={{ fontSize: 11, color: "#E65100" }}>
+                                  Cadastre a tampa no Estoque (categoria Tampa){" "}
+                                  <Link href="/estoque-insumos" className="hover:underline" style={{ fontWeight: 600 }}>
+                                    Ir para o Estoque →
+                                  </Link>
+                                </p>
+                              ) : (
+                                <select
+                                  className={selectCls}
+                                  style={{ fontSize: 13 }}
+                                  required
+                                  value={sel.tampa_id ?? ""}
+                                  onChange={(e) => setSel("tampa_id", e.target.value)}
+                                >
+                                  <option value="">- Selecione -</option>
+                                  {tampas.map((i) => (
+                                    <option key={i.id} value={i.id}>
+                                      {optionLabel(i)}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
                             </div>
                             <div>
-                              <div style={{ fontSize: 11, color: "#6B7A99" }}>Alça</div>
+                              <div style={{ fontSize: 11, color: "#6B7A99" }}>Alça (opcional)</div>
                               <select
                                 className={selectCls}
                                 style={{ fontSize: 13 }}
-                                value={embalagemState[label]?.alca_id ?? ""}
-                                onChange={(e) =>
-                                  setEmbalagemState((prev) => ({
-                                    ...prev,
-                                    [label]: { ...prev[label], alca_id: e.target.value || null },
-                                  }))
-                                }
+                                value={sel.alca_id ?? ""}
+                                onChange={(e) => setSel("alca_id", e.target.value)}
                               >
                                 <option value="">- Sem Alça -</option>
-                                {embalagensDisponiveis.alca.map((i) => (
+                                {alcas.map((i) => (
                                   <option key={i.id} value={i.id}>
-                                    {i.nome} ({i.estoque_atual} UN)
+                                    {optionLabel(i)}
                                   </option>
                                 ))}
                               </select>
                             </div>
+                            {escolhidos.map((i) => (
+                              <p key={i.id} style={{ color: "#B45309", fontSize: 11 }}>
+                                ⚠ {i.nome}: necessário {necessarioPorInsumo[i.id]}, disponível {i.estoque_atual}{" "}
+                                {i.unidade}
+                              </p>
+                            ))}
                           </div>
                         )}
                       </div>
@@ -683,7 +757,7 @@ export default function EnvaseClient({
                 {/* Rendimento Real */}
                 {(() => {
                   const formulaRendimento = selectedLote.formulas?.rendimento ?? 0;
-                  const diff = rendimentoReal - formulaRendimento;
+                  const diff = Math.round((rendimentoReal - formulaRendimento) * 1000) / 1000;
                   return (
                     <div className="mb-4">
                       <p style={{ color: "#1565C0", fontWeight: 700, fontSize: 17 }}>
@@ -715,6 +789,36 @@ export default function EnvaseClient({
                   </Field>
                 </div>
 
+                {/* Produto de destino */}
+                <div className="mb-6 max-w-xs flex flex-col gap-3">
+                  <Field label="Produto de destino *">
+                    <select
+                      className={inputCls}
+                      required
+                      value={produtoDestino}
+                      onChange={(e) => setProdutoDestino(e.target.value)}
+                    >
+                      <option value="">- Selecione -</option>
+                      {produtos.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nome}
+                        </option>
+                      ))}
+                      <option value={NOVO_PRODUTO}>Criar novo produto</option>
+                    </select>
+                  </Field>
+                  {produtoDestino === NOVO_PRODUTO && (
+                    <Field label="Nome do novo produto *">
+                      <input
+                        className={inputCls}
+                        type="text"
+                        value={novoProdutoNome}
+                        onChange={(e) => setNovoProdutoNome(e.target.value)}
+                      />
+                    </Field>
+                  )}
+                </div>
+
                 {/* Feedback */}
                 {successMsg && (
                   <p className="text-sm text-green-700 bg-green-50 rounded px-3 py-2 mb-4">
@@ -729,21 +833,23 @@ export default function EnvaseClient({
 
                 {/* Actions */}
                 <div className="flex flex-col sm:flex-row gap-3">
+                  {selectedLote.status === "envase" && (
+                    <button
+                      onClick={handleSave}
+                      disabled={pending}
+                      className="flex-1 px-5 py-2 rounded-lg text-white text-sm font-bold hover:brightness-110 transition disabled:opacity-60"
+                      style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
+                    >
+                      {pending ? "Aguarde..." : "SALVAR"}
+                    </button>
+                  )}
                   <button
-                    onClick={handleSave}
-                    disabled={saveLoading || concluirLoading}
-                    className="flex-1 px-5 py-2 rounded-lg text-white text-sm font-bold hover:brightness-110 transition disabled:opacity-60"
-                    style={{ backgroundColor: "#1565C0", cursor: "pointer" }}
-                  >
-                    {saveLoading ? "Salvando..." : "SALVAR"}
-                  </button>
-                  <button
-                    onClick={handleConcluirClick}
-                    disabled={!atLeastOneQtd || concluirLoading || saveLoading}
+                    onClick={() => handleConcluir(false)}
+                    disabled={!atLeastOneQtd || pending}
                     className="flex-1 px-5 py-2 rounded-lg text-white text-sm font-bold hover:brightness-110 transition disabled:opacity-60"
                     style={{ backgroundColor: "#2E7D32", cursor: "pointer" }}
                   >
-                    {concluirLoading ? "Concluindo..." : "CONCLUIR LOTE"}
+                    {pending ? "Aguarde..." : "CONCLUIR LOTE"}
                   </button>
                   {atLeastOneQtd && (
                     <button
@@ -761,34 +867,54 @@ export default function EnvaseClient({
         </div>
       )}
 
-      {/* ── Confirm: concluir sem salvar ── */}
-      {showConfirmConcluir && (
+      {/* ── Modal: estoque insuficiente ── */}
+      {faltas && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
         >
           <div
-            className="bg-white w-full max-w-sm"
+            className="bg-white w-full max-w-md"
             style={{ borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
           >
             <div className="px-6 py-5">
-              <p className="text-sm" style={{ color: "#1A3A6B" }}>
-                As quantidades não foram salvas. Tens a certeza que queres
-                concluir sem salvar?
-              </p>
-              <div className="flex gap-3 pt-5 justify-end">
-                <button
-                  onClick={() => setShowConfirmConcluir(false)}
+              <h3 className="text-base font-bold mb-3" style={{ color: "#1A3A6B" }}>
+                Estoque insuficiente
+              </h3>
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr style={{ color: "#6B7A99" }}>
+                    <th className="text-left py-1">Insumo</th>
+                    <th className="text-right py-1">Necessário</th>
+                    <th className="text-right py-1">Disponível</th>
+                    <th className="text-left py-1 pl-2">Un.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {faltas.map((f) => (
+                    <tr key={f.insumo_id}>
+                      <td className="py-1">{f.nome}</td>
+                      <td className="py-1 text-right">{f.necessario}</td>
+                      <td className="py-1 text-right">{f.disponivel}</td>
+                      <td className="py-1 pl-2">{f.unidade}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="flex gap-3 pt-5 justify-end flex-wrap">
+                <Link
+                  href="/estoque-insumos"
                   className="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
                 >
-                  Cancelar
-                </button>
+                  Atualizar estoque
+                </Link>
                 <button
-                  onClick={handleConfirmConcluirMesmoAssim}
-                  className="px-4 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition"
+                  onClick={() => handleConcluir(true)}
+                  disabled={pending}
+                  className="px-4 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
                   style={{ backgroundColor: "#2E7D32" }}
                 >
-                  Concluir mesmo assim
+                  {pending ? "Aguarde..." : "Continuar mesmo assim"}
                 </button>
               </div>
             </div>
@@ -815,7 +941,7 @@ export default function EnvaseClient({
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr style={{ backgroundColor: "#1565C0" }}>
-                      {["Produto", "Lote", "Data Envase", "1L", "2L", "5L", "20L", "Rendimento Real"].map((h) => (
+                      {["Produto", "Lote", "Data Envase", "200 ML", "500 ML", "1L", "2L", "5L", "20L", "Rendimento Real"].map((h) => (
                         <th
                           key={h}
                           className="text-left text-white font-bold px-4 py-3"
@@ -831,9 +957,11 @@ export default function EnvaseClient({
                       const env = item.envases[0];
                       return (
                         <tr key={item.id} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
-                          <td className="px-4 py-3 font-medium text-gray-800">{item.formulas?.nome ?? "—"}</td>
+                          <td className="px-4 py-3 font-medium text-gray-800">{env?.produtos_acabados?.nome ?? item.formulas?.nome ?? "—"}</td>
                           <td className="px-4 py-3 text-gray-700">{item.numero_lote}</td>
                           <td className="px-4 py-3 text-gray-700">{formatDataEnvase(env?.data_envase)}</td>
+                          <td className="px-4 py-3 text-gray-700">{env?.qtd_200ml ?? 0}</td>
+                          <td className="px-4 py-3 text-gray-700">{env?.qtd_500ml ?? 0}</td>
                           <td className="px-4 py-3 text-gray-700">{env?.qtd_1l ?? 0}</td>
                           <td className="px-4 py-3 text-gray-700">{env?.qtd_2l ?? 0}</td>
                           <td className="px-4 py-3 text-gray-700">{env?.qtd_5l ?? 0}</td>
