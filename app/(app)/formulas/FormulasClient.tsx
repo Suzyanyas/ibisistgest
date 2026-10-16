@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Trash2, AlertTriangle, FlaskConical, Copy } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
@@ -252,14 +252,20 @@ function fromFormula(f: FormulaRow) {
 export default function FormulasClient({
   initialFormulas,
   isAdmin,
+  focusId,
 }: {
   initialFormulas: FormulaRow[];
   isAdmin: boolean;
+  focusId: string | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   const [formulas, setFormulas] = useState<FormulaRow[]>(initialFormulas);
+  const [destaqueId, setDestaqueId] = useState<string | null>(
+    focusId && initialFormulas.some((f) => f.id === focusId) ? focusId : null
+  );
+  const focoTratado = useRef(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<FormulaWithInsumos | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -363,6 +369,22 @@ export default function FormulasClient({
   async function reloadDetail() {
     if (selectedId) await loadDetail(selectedId);
   }
+
+  // Pendências do dashboard: ?focus=<formulaId> abre a fórmula e destaca-a na lista
+  useEffect(() => {
+    if (!focusId || focoTratado.current) return;
+    focoTratado.current = true;
+    if (formulas.some((f) => f.id === focusId)) {
+      setTimeout(() => void selectFormula(focusId), 0);
+      requestAnimationFrame(() => {
+        document
+          .getElementById(`formula-${focusId}`)
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+      setTimeout(() => setDestaqueId(null), 4000);
+    }
+    router.replace("/formulas", { scroll: false });
+  }, [focusId, formulas, router]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Open modals ──
 
@@ -717,12 +739,15 @@ export default function FormulasClient({
           {formulas.map((f) => {
             const isActive = f.id === selectedId;
             return (
-              <li key={f.id}>
+              <li key={f.id} id={`formula-${f.id}`}>
                 <button
                   onClick={() => selectFormula(f.id)}
                   className="sidebar-item sidebar-nav-premium w-full text-left text-sm transition"
                   style={{
-                    background: isActive
+                    outline: f.id === destaqueId ? "2px solid #1565C0" : undefined,
+                    background: f.id === destaqueId
+                      ? "#BBDEFB"
+                      : isActive
                       ? "linear-gradient(90deg, rgba(21,101,192,0.12) 0%, rgba(21,101,192,0.04) 100%)"
                       : "transparent",
                     borderLeft: isActive ? "3px solid #1565C0" : "3px solid transparent",

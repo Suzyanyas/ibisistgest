@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Calendar, Package, CheckCircle } from "lucide-react";
 import {
@@ -925,24 +926,31 @@ export default function DashboardClient({
                   <ul>
                     {(showAllPendencias ? g.items : g.items.slice(0, 3)).map((it) => (
                       <li key={it.id} className="border-b border-gray-200 last:border-0">
-                        <button
-                          onClick={() => router.push(it.destino)}
-                          className="w-full text-left transition-opacity hover:opacity-80"
-                          style={{ padding: "6px 0", background: "none", border: "none", cursor: "pointer" }}
+                        <Link
+                          href={it.href}
+                          className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 -mx-2 transition-colors hover:bg-amber-100 focus-visible:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
                         >
-                          <span className="block text-gray-800 truncate" style={{ fontSize: 14 }}>
-                            {it.nome}
+                          <span className="min-w-0">
+                            <span className="block text-gray-800 truncate" style={{ fontSize: 14 }}>
+                              {it.nome}
+                            </span>
+                            <span className="block text-gray-500" style={{ fontSize: 12 }}>
+                              {it.detalhe}
+                            </span>
                           </span>
-                          <span className="block text-gray-500" style={{ fontSize: 12 }}>
-                            {it.detalhe}
+                          <span
+                            className="flex-shrink-0 font-semibold text-amber-800 underline"
+                            style={{ fontSize: 12 }}
+                          >
+                            {it.acao}
                           </span>
-                        </button>
+                        </Link>
                       </li>
                     ))}
                   </ul>
                 </div>
               ))}
-              {(pendencias.grupos.length > 2 || totalPendencias > 5) && (
+              {(pendencias.grupos.length > 2 || pendencias.grupos.some((g) => g.items.length > 3)) && (
                 <button
                   type="button"
                   onClick={() => setShowAllPendencias((v) => !v)}

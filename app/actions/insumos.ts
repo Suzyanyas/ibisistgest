@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser, getUserRole, requireAdmin } from "@/app/actions/auth-role";
 import { logAtividade } from "@/app/actions/dashboard";
@@ -16,6 +17,12 @@ export type InsumoWithFlag = InsumoSemCusto & {
   tipo: "producao" | "material";
 };
 export type Movimento = Tables<"insumo_movimentos">;
+
+// O dashboard (card de pendências) e o estoque dependem destes dados
+function revalidarInsumos() {
+  revalidatePath("/");
+  revalidatePath("/estoque-insumos");
+}
 
 // Colunas de insumos sem os custos (custos vêm de insumo_custos, só para admin)
 const INSUMO_COLUNAS =
@@ -78,6 +85,7 @@ export async function createInsumo(payload: {
     p_user_email: user?.email ?? null,
   });
   if (error) throw rpcError(error);
+  revalidarInsumos();
 }
 
 export async function novaEntrada(
@@ -99,6 +107,7 @@ export async function novaEntrada(
     p_user_email: user?.email ?? null,
   });
   if (error) throw rpcError(error);
+  revalidarInsumos();
 }
 
 export async function atualizarEstoque(
@@ -118,6 +127,7 @@ export async function atualizarEstoque(
     p_user_email: user?.email ?? null,
   });
   if (error) throw rpcError(error);
+  revalidarInsumos();
 }
 
 export async function confirmarDensidade(
@@ -134,6 +144,7 @@ export async function confirmarDensidade(
     p_user_email: user?.email ?? null,
   });
   if (error) throw rpcError(error);
+  revalidarInsumos();
 }
 
 export async function updateCustoInsumo(
@@ -202,6 +213,7 @@ export async function updateInsumo(
     await writeCusto(supabase, id, custo_unitario, custo_unidade);
   }
   await logAtividade("Edição de insumo", nome, user?.id, user?.email);
+  revalidarInsumos();
 }
 
 export async function deleteInsumo(id: string): Promise<void> {
@@ -243,6 +255,7 @@ export async function deleteInsumo(id: string): Promise<void> {
   if (nome && unidade) {
     await logAtividade("Exclusão de insumo", `${nome} (${unidade})`, user?.id, user?.email);
   }
+  revalidarInsumos();
 }
 
 export async function getInsumosAbaixoMinimo(): Promise<{

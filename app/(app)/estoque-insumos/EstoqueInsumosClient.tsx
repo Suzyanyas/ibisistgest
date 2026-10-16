@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2, Search, AlertTriangle } from "lucide-react";
 import {
@@ -76,11 +76,11 @@ function Modal({
       style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
     >
       <div
-        className="bg-white w-full max-w-md"
-        style={{ borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
+        className="bg-white w-full max-w-md flex flex-col"
+        style={{ borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.18)", maxHeight: "90vh" }}
       >
         <div
-          className="flex items-center justify-between px-6 py-4"
+          className="flex items-center justify-between px-6 py-4 flex-shrink-0"
           style={{ backgroundColor: "#1565C0", borderRadius: "12px 12px 0 0" }}
         >
           <h2 className="text-white font-semibold text-lg">{title}</h2>
@@ -92,7 +92,7 @@ function Modal({
             &times;
           </button>
         </div>
-        <div className="p-6">{children}</div>
+        <div className="p-6 overflow-y-auto">{children}</div>
       </div>
     </div>
   );
@@ -148,16 +148,19 @@ function DensidadeField({
   onChange,
   isAdmin,
   acao,
+  autoFocus,
 }: {
   value: string;
   onChange: (v: string) => void;
   isAdmin: boolean;
   acao?: React.ReactNode;
+  autoFocus?: boolean;
 }) {
   return (
     <Field label="Densidade (g/ml)">
       <div className="flex gap-2 items-center">
         <input
+          autoFocus={autoFocus}
           className={`${inputCls}${isAdmin ? "" : " bg-gray-50 text-gray-500"}`}
           type="text"
           inputMode="decimal"
@@ -193,12 +196,24 @@ function parseDensidade(raw: string): number | null | undefined {
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
+export type FocoPendencia = {
+  id: string | null;
+  acao: string | null;
+  categoria: string | null;
+};
+
+const DESTAQUE_MS = 4000;
+
 export default function EstoqueInsumosClient({
   initialInsumos,
+  initialTab,
   isAdmin,
+  foco,
 }: {
   initialInsumos: InsumoWithFlag[];
+  initialTab: TabType;
   isAdmin: boolean;
+  foco: FocoPendencia;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -209,7 +224,11 @@ export default function EstoqueInsumosClient({
     i.nome.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
       .includes(searchQuery.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase())
   );
-  const [activeTab, setActiveTab] = useState<TabType>("producao");
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
+  const [destaqueId, setDestaqueId] = useState<string | null>(null);
+  // Modo do modal Editar aberto a partir de uma pendência de densidade
+  const [editarFoco, setEditarFoco] = useState<"densidade" | null>(null);
+  const focoTratado = useRef(false);
   const [loadingTab, setLoadingTab] = useState(false);
   const [modal, setModal] = useState<ModalType>(null);
   const [selected, setSelected] = useState<InsumoWithFlag | null>(null);
@@ -289,6 +308,7 @@ export default function EstoqueInsumosClient({
 
   function closeModal() {
     setModal(null);
+    setEditarFoco(null);
     setSelected(null);
     setError(null);
     setNovoNome("");
@@ -500,6 +520,45 @@ export default function EstoqueInsumosClient({
       router.refresh();
     });
   }
+
+  // ── Pendências do dashboard: ?focus=<id>&acao=densidade|ajuste|editar|novo ──
+  function abrirFoco(ins: InsumoWithFlag | undefined) {
+    if (ins) {
+      setDestaqueId(ins.id);
+      requestAnimationFrame(() => {
+        document
+          .getElementById(`insumo-${ins.id}`)
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+      setTimeout(() => setDestaqueId(null), DESTAQUE_MS);
+      if (foco.acao === "densidade" && isAdmin) {
+        openEditar(ins);
+        setEditarFoco("densidade");
+      } else if (foco.acao === "ajuste") {
+        openAtualizacao(ins);
+      } else if (foco.acao === "editar") {
+        openEditar(ins);
+      }
+    } else if (foco.acao === "novo") {
+      const cat = CATEGORIAS.some((c) => c.value === foco.categoria) ? foco.categoria : null;
+      setNovoCategoria(cat ?? "");
+      setError(null);
+      setModal("novo");
+    }
+  }
+
+  useEffect(() => {
+    if (focoTratado.current) return;
+    if (!foco.id && foco.acao !== "novo") return;
+    focoTratado.current = true;
+
+    const ins = foco.id ? insumos.find((i) => i.id === foco.id) : undefined;
+    // Adiado um tick: abrir modais sincroniza com a URL, não deriva do estado
+    setTimeout(() => abrirFoco(ins), 0);
+
+    // Limpa os parâmetros para que um refresh não reabra o modal
+    router.replace("/estoque-insumos", { scroll: false });
+  }, [foco, insumos, isAdmin, router]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Save: Novo Insumo ──
   async function handleSaveNovo() {
@@ -814,10 +873,16 @@ export default function EstoqueInsumosClient({
               return (
                 <tr
                   key={ins.id}
+                  id={`insumo-${ins.id}`}
                   className="table-row-hover"
                   style={{
-                    backgroundColor: rowBg,
-                    ...(ins.estoque_baixo ? { borderLeft: "3px solid #F59E0B" } : {}),
+                    backgroundColor: ins.id === destaqueId ? "#BBDEFB" : rowBg,
+                    transition: "background-color 0.6s",
+                    ...(ins.id === destaqueId
+                      ? { outline: "2px solid #1565C0", outlineOffset: -2 }
+                      : ins.estoque_baixo
+                      ? { borderLeft: "3px solid #F59E0B" }
+                      : {}),
                   }}
                 >
                   <td className="px-4 py-4">
@@ -1218,7 +1283,10 @@ export default function EstoqueInsumosClient({
 
       {/* ── Modal: Editar Insumo ── */}
       {modal === "editar" && selected && (
-        <Modal title="Editar Insumo" onClose={closeModal}>
+        <Modal
+          title={editarFoco === "densidade" ? "Confirmar densidade" : "Editar Insumo"}
+          onClose={closeModal}
+        >
           <div className="flex flex-col gap-4">
             <Field label="Nome *">
               <input
@@ -1246,6 +1314,7 @@ export default function EstoqueInsumosClient({
               value={editDensidade}
               onChange={setEditDensidade}
               isAdmin={isAdmin}
+              autoFocus={editarFoco === "densidade"}
               acao={
                 isAdmin && selected.densidade != null && !selected.densidade_confirmada ? (
                   <button

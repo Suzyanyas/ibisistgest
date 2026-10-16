@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { History, Search } from "lucide-react";
 import {
   getProdutosAcabados,
@@ -194,13 +195,35 @@ export default function ProdutoAcabadoClient({
   initialProdutos,
   initialRetiradasHoje,
   isAdmin,
+  focusId,
 }: {
   initialProdutos: ProdutoAcabadoWithFlag[];
   initialRetiradasHoje: RetiradasHoje[];
   isAdmin: boolean;
+  focusId: string | null;
 }) {
+  const router = useRouter();
   const [produtos, setProdutos] =
     useState<ProdutoAcabadoWithFlag[]>(initialProdutos);
+  const [destaqueId, setDestaqueId] = useState<string | null>(
+    focusId && initialProdutos.some((p) => p.id === focusId) ? focusId : null
+  );
+  const focoTratado = useRef(false);
+
+  // Pendências do dashboard: ?focus=<produtoId> destaca a linha do produto
+  useEffect(() => {
+    if (!focusId || focoTratado.current) return;
+    focoTratado.current = true;
+    if (produtos.some((p) => p.id === focusId)) {
+      requestAnimationFrame(() => {
+        document
+          .getElementById(`produto-${focusId}`)
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+      setTimeout(() => setDestaqueId(null), 4000);
+    }
+    router.replace("/produto-acabado", { scroll: false });
+  }, [focusId, produtos, router]);
   const [retiradasHoje, setRetiradasHoje] =
     useState<RetiradasHoje[]>(initialRetiradasHoje);
 
@@ -680,10 +703,16 @@ export default function ProdutoAcabadoClient({
               return (
                 <tr
                   key={p.id}
+                  id={`produto-${p.id}`}
                   className="table-row-hover"
                   style={{
-                    backgroundColor: rowBg,
-                    ...(p.estoque_baixo ? { borderLeft: "3px solid #F59E0B" } : {}),
+                    backgroundColor: p.id === destaqueId ? "#BBDEFB" : rowBg,
+                    transition: "background-color 0.6s",
+                    ...(p.id === destaqueId
+                      ? { outline: "2px solid #1565C0", outlineOffset: -2 }
+                      : p.estoque_baixo
+                      ? { borderLeft: "3px solid #F59E0B" }
+                      : {}),
                   }}
                 >
                   <td className="px-4 py-4">

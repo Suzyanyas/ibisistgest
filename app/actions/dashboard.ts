@@ -286,11 +286,20 @@ export async function getAtividadeRecente(): Promise<AtividadeItem[]> {
 
 // ─── Pendências (apenas admin) ───────────────────────────────────────────────
 
+export type PendenciaModulo = "estoque-insumos" | "produto-acabado" | "formulas";
+
 export type PendenciaItem = {
+  // Chave única do item na lista
   id: string;
+  // Id do registo a abrir (insumo, produto ou fórmula); null quando não há registo
+  registroId: string | null;
   nome: string;
   detalhe: string;
-  destino: string;
+  modulo: PendenciaModulo;
+  // Texto curto da ação, por exemplo "Confirmar densidade"
+  acao: string;
+  // Link para o módulo, já com focus e acao
+  href: string;
 };
 
 export type PendenciaTipo =
@@ -313,7 +322,17 @@ function normalizar(texto: string): string {
   return texto.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
 
-const TAMANHOS_GARRAFA: { label: string; categoria: string }[] = [
+function linkPendencia(
+  modulo: PendenciaModulo,
+  params: Record<string, string | null>
+): string {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
+  const texto = qs.toString();
+  return `/${modulo}${texto ? `?${texto}` : ""}`;
+}
+
+const TAMANHOS_GARRAFA:{ label: string; categoria: string }[] = [
   { label: "200ML", categoria: "garrafa_200ml" },
   { label: "500ML", categoria: "garrafa_500ml" },
   { label: "1L", categoria: "garrafa_1l" },
@@ -339,7 +358,7 @@ export async function getPendencias(): Promise<Pendencias> {
       .order("created_at", { ascending: false }),
     supabase
       .from("formula_insumos")
-      .select("id, unidade, formulas(nome), insumos(nome, unidade, densidade)"),
+      .select("id, formula_id, unidade, formulas(nome), insumos(nome, unidade, densidade)"),
     supabase
       .from("produtos_acabados")
       .select("id, nome, formula_id")
@@ -365,9 +384,12 @@ export async function getPendencias(): Promise<Pendencias> {
       .filter((i) => i.densidade != null && !i.densidade_confirmada)
       .map((i) => ({
         id: i.id,
+        registroId: i.id,
         nome: i.nome,
         detalhe: `Densidade ${i.densidade}`,
-        destino: "/estoque-insumos",
+        modulo: "estoque-insumos" as const,
+        acao: "Confirmar densidade",
+        href: linkPendencia("estoque-insumos", { focus: i.id, acao: "densidade" }),
       }))
   );
 
@@ -378,9 +400,12 @@ export async function getPendencias(): Promise<Pendencias> {
       .filter((i) => i.estoque_estimado)
       .map((i) => ({
         id: i.id,
+        registroId: i.id,
         nome: i.nome,
         detalhe: "Valor estimado, precisa de contagem",
-        destino: "/estoque-insumos",
+        modulo: "estoque-insumos" as const,
+        acao: "Contar estoque",
+        href: linkPendencia("estoque-insumos", { focus: i.id, acao: "ajuste" }),
       }))
   );
 
@@ -419,9 +444,12 @@ export async function getPendencias(): Promise<Pendencias> {
           const lote = /lote\s+(\S+)/i.exec(f.obs ?? "")?.[1];
           return {
             id: f.id,
+            registroId: f.insumo_id,
             nome: f.insumos?.nome ?? "—",
             detalhe: `Faltaram ${f.falta} ${f.insumos?.unidade ?? ""}${lote ? ` no lote ${lote}` : ""}`.trim(),
-            destino: "/estoque-insumos",
+            modulo: "estoque-insumos" as const,
+            acao: "Acertar estoque",
+            href: linkPendencia("estoque-insumos", { focus: f.insumo_id, acao: "ajuste" }),
           };
         })
     );
@@ -430,6 +458,7 @@ export async function getPendencias(): Promise<Pendencias> {
   // d. unidade incompatível na fórmula (insumo sem densidade)
   const formulaInsumos = (fiRes.data ?? []) as unknown as Array<{
     id: string;
+    formula_id: string;
     unidade: string;
     formulas: { nome: string } | null;
     insumos: { nome: string; unidade: string; densidade: number | null } | null;
@@ -445,9 +474,12 @@ export async function getPendencias(): Promise<Pendencias> {
       )
       .map((fi) => ({
         id: fi.id,
+        registroId: fi.formula_id,
         nome: `${fi.formulas?.nome ?? "—"}: ${fi.insumos?.nome ?? "—"}`,
         detalhe: `Na fórmula em ${fi.unidade}, no estoque em ${fi.insumos?.unidade ?? ""}`,
-        destino: "/formulas",
+        modulo: "formulas" as const,
+        acao: "Rever fórmula",
+        href: linkPendencia("formulas", { focus: fi.formula_id }),
       }))
   );
 
@@ -456,9 +488,12 @@ export async function getPendencias(): Promise<Pendencias> {
     "produto_sem_formula",
     (paRes.data ?? []).map((p) => ({
       id: p.id,
+      registroId: p.id,
       nome: p.nome,
       detalhe: "Sem fórmula associada",
-      destino: "/produto-acabado",
+      modulo: "produto-acabado" as const,
+      acao: "Ver produto",
+      href: linkPendencia("produto-acabado", { focus: p.id }),
     }))
   );
 
@@ -473,9 +508,12 @@ export async function getPendencias(): Promise<Pendencias> {
       })
       .map((i) => ({
         id: i.id,
+        registroId: i.id,
         nome: i.nome,
         detalhe: "Sem categoria definida",
-        destino: "/estoque-insumos",
+        modulo: "estoque-insumos" as const,
+        acao: "Definir categoria",
+        href: linkPendencia("estoque-insumos", { focus: i.id, acao: "editar" }),
       }))
   );
 
@@ -485,16 +523,22 @@ export async function getPendencias(): Promise<Pendencias> {
     (t) => !categorias.has(t.categoria)
   ).map((t) => ({
     id: `garrafa-${t.categoria}`,
+    registroId: null,
     nome: `Sem garrafa cadastrada para ${t.label}`,
     detalhe: `Cadastre um insumo com a categoria Garrafa ${t.label}`,
-    destino: "/estoque-insumos",
+    modulo: "estoque-insumos" as const,
+    acao: "Cadastrar garrafa",
+    href: linkPendencia("estoque-insumos", { acao: "novo", categoria: t.categoria }),
   }));
   if (!categorias.has("tampa")) {
     semEmbalagem.push({
       id: "tampa",
+      registroId: null,
       nome: "Sem tampa cadastrada",
       detalhe: "Cadastre um insumo com a categoria Tampa",
-      destino: "/estoque-insumos",
+      modulo: "estoque-insumos",
+      acao: "Cadastrar tampa",
+      href: linkPendencia("estoque-insumos", { acao: "novo", categoria: "tampa" }),
     });
   }
   add("tamanho_sem_garrafa", semEmbalagem);

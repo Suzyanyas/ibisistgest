@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser, getUserRole, requireAdmin } from "@/app/actions/auth-role";
 import { getCustosMap } from "@/lib/custos";
@@ -128,6 +129,7 @@ export async function deleteFormula(id: string): Promise<void> {
   if (childError) throw new Error(childError.message);
   const { error } = await supabase.from("formulas").delete().eq("id", id);
   if (error) throw new Error(error.message);
+  revalidatePath("/");
 }
 
 export async function addInsumoToFormula(
@@ -141,6 +143,7 @@ export async function addInsumoToFormula(
     .from("formula_insumos")
     .insert({ formula_id, insumo_id, quantidade, unidade });
   if (error) throw new Error(error.message);
+  revalidatePath("/");
 }
 
 export async function updateFormulaInsumo(
@@ -154,6 +157,7 @@ export async function updateFormulaInsumo(
     .update({ quantidade, unidade })
     .eq("id", id);
   if (error) throw new Error(error.message);
+  revalidatePath("/");
 }
 
 export async function removeInsumoFromFormula(id: string): Promise<void> {
@@ -163,6 +167,7 @@ export async function removeInsumoFromFormula(id: string): Promise<void> {
     .delete()
     .eq("id", id);
   if (error) throw new Error(error.message);
+  revalidatePath("/");
 }
 
 export type FormulaCustoBreakdown = {

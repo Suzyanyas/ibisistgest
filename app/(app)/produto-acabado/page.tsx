@@ -2,7 +2,12 @@ import { getProdutosAcabados, getRetiradasHoje } from "@/app/actions/produto-aca
 import { getUserRole } from "@/app/actions/auth-role";
 import ProdutoAcabadoClient from "./ProdutoAcabadoClient";
 
-export default async function ProdutoAcabadoPage() {
+export default async function ProdutoAcabadoPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const { focus } = await searchParams;
   const [produtos, retiradasHoje, role] = await Promise.all([
     getProdutosAcabados(),
     getRetiradasHoje(),
@@ -13,6 +18,7 @@ export default async function ProdutoAcabadoPage() {
       initialProdutos={produtos}
       initialRetiradasHoje={retiradasHoje}
       isAdmin={role === "admin"}
+      focusId={(Array.isArray(focus) ? focus[0] : focus) ?? null}
     />
   );
 }
