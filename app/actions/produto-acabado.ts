@@ -1,8 +1,11 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser, requireAdmin } from "@/app/actions/auth-role";
+import { logAtividade } from "@/app/actions/dashboard";
 import { rpcError } from "@/lib/supabase/rpc-error";
+import { hojeFortaleza, intervaloDiaFortaleza } from "@/lib/fortaleza";
 import type { Tables } from "@/types/supabase";
 
 export type ProdutoAcabadoRow = Tables<"produtos_acabados">;
@@ -20,13 +23,34 @@ export type LoteConcluidoWithFormula = Tables<"lotes_producao"> & {
   formulas: Pick<Tables<"formulas">, "nome" | "sigla"> | null;
 };
 
-export type HistoricoProdutoItem = Tables<"lotes_producao"> & {
-  formulas: Pick<Tables<"formulas">, "nome" | "sigla"> | null;
-  envases: Pick<
-    Tables<"envases">,
-    "qtd_1l" | "qtd_2l" | "qtd_5l" | "qtd_20l" | "rendimento_real" | "data_envase"
-  >[];
+export type HistoricoProdutoItem = Pick<
+  Tables<"envases">,
+  | "id"
+  | "lote_id"
+  | "qtd_200ml"
+  | "qtd_500ml"
+  | "qtd_1l"
+  | "qtd_2l"
+  | "qtd_5l"
+  | "qtd_20l"
+  | "rendimento_real"
+  | "data_envase"
+  | "user_email"
+> & {
+  lotes_producao: { numero_lote: string } | null;
+  produtos_acabados: { nome: string } | null;
 };
+
+export type ResultadoAcao = { ok: true } | { ok: false; error: string };
+
+function revalidarProdutoAcabado() {
+  revalidatePath("/");
+  revalidatePath("/produto-acabado");
+}
+
+function mensagemErro(e: unknown, fallback: string): string {
+  return e instanceof Error && e.message ? e.message : fallback;
+}
 
 export async function getProdutosAcabados(): Promise<ProdutoAcabadoWithFlag[]> {
   const supabase = await createClient();
@@ -41,58 +65,105 @@ export async function getProdutosAcabados(): Promise<ProdutoAcabadoWithFlag[]> {
   }));
 }
 
+export type OrigemProduto = "estoque_inicial" | "produto_de_fora";
+
+export type CreateProdutoAcabadoInput = {
+  nome: string;
+  formula_id: string;
+  estoque_seguranca: number;
+  estoque_200ml: number;
+  estoque_500ml: number;
+  estoque_1l: number;
+  estoque_2l: number;
+  estoque_5l: number;
+  estoque_20l: number;
+  origem: OrigemProduto;
+  obs: string;
+};
+
 export async function createProdutoAcabado(
-  nome: string,
-  estoque_seguranca: number,
-  estoque_1l: number,
-  estoque_2l: number,
-  estoque_5l: number,
-  estoque_20l: number,
-  formula_id: string
-): Promise<void> {
+  input: CreateProdutoAcabadoInput
+): Promise<ResultadoAcao> {
+  const nome = input.nome.trim();
+  const obs = input.obs.trim();
+  if (!nome) return { ok: false, error: "Nome é obrigatório." };
+  if (!input.formula_id) {
+    return { ok: false, error: "Selecione a fórmula correspondente a este produto." };
+  }
+  if (input.origem !== "estoque_inicial" && input.origem !== "produto_de_fora") {
+    return { ok: false, error: "Selecione a origem do produto." };
+  }
+  if (input.origem === "produto_de_fora" && !obs) {
+    return {
+      ok: false,
+      error: "Informe a observação (ex.: revenda, fornecedor X) para produto de fora.",
+    };
+  }
+
   const supabase = await createClient();
   const user = await getCurrentUser();
   const { error } = await supabase.rpc("criar_produto_acabado", {
     p_nome: nome,
-    p_formula_id: formula_id,
-    p_estoque_200ml: 0,
-    p_estoque_500ml: 0,
-    p_estoque_1l: estoque_1l,
-    p_estoque_2l: estoque_2l,
-    p_estoque_5l: estoque_5l,
-    p_estoque_20l: estoque_20l,
-    p_estoque_seguranca: estoque_seguranca,
+    p_formula_id: input.formula_id,
+    p_estoque_200ml: input.estoque_200ml,
+    p_estoque_500ml: input.estoque_500ml,
+    p_estoque_1l: input.estoque_1l,
+    p_estoque_2l: input.estoque_2l,
+    p_estoque_5l: input.estoque_5l,
+    p_estoque_20l: input.estoque_20l,
+    p_estoque_seguranca: input.estoque_seguranca,
     p_user_id: user?.id ?? null,
     p_user_email: user?.email ?? null,
   });
-  if (error) throw rpcError(error);
+  if (error) return { ok: false, error: rpcError(error).message };
+
+  try {
+    await logAtividade(
+      input.origem === "produto_de_fora" ? "Produto de fora" : "Estoque inicial",
+      obs ? `${nome} | ${obs}` : nome,
+      user?.id,
+      user?.email
+    );
+  } catch {
+    // o produto já foi criado; falha no histórico não deve desfazer a operação
+  }
+
+  revalidarProdutoAcabado();
+  return { ok: true };
 }
 
+// Tamanhos 200ml e 500ml ficam no fim, com 0 por padrão, para manter as chamadas existentes.
 export async function registrarRetirada(
   produto_id: string,
   qtd_1l: number,
   qtd_2l: number,
   qtd_5l: number,
-  qtd_20l: number
-): Promise<void> {
+  qtd_20l: number,
+  qtd_200ml: number = 0,
+  qtd_500ml: number = 0,
+  obs?: string
+): Promise<ResultadoAcao> {
   const supabase = await createClient();
   const user = await getCurrentUser();
   const { error } = await supabase.rpc("registrar_retirada", {
     p_produto_id: produto_id,
-    p_qtd_200ml: 0,
-    p_qtd_500ml: 0,
+    p_qtd_200ml: qtd_200ml,
+    p_qtd_500ml: qtd_500ml,
     p_qtd_1l: qtd_1l,
     p_qtd_2l: qtd_2l,
     p_qtd_5l: qtd_5l,
     p_qtd_20l: qtd_20l,
-    p_obs: null,
+    p_obs: obs?.trim() ? obs.trim() : null,
     p_user_id: user?.id ?? null,
     p_user_email: user?.email ?? null,
   });
-  if (error) throw rpcError(error);
+  if (error) return { ok: false, error: rpcError(error).message };
+  revalidarProdutoAcabado();
+  return { ok: true };
 }
 
 // Define o estoque absoluto por tamanho. 200ml/500ml omitidos mantêm o valor atual.
+// Ordem dos argumentos: produto_id, 1L, 2L, 5L, 20L, 200ml, 500ml, obs.
 export async function ajustarProdutoAcabado(
   produto_id: string,
   estoque_1l: number,
@@ -102,8 +173,12 @@ export async function ajustarProdutoAcabado(
   estoque_200ml?: number,
   estoque_500ml?: number,
   obs?: string
-): Promise<void> {
-  await requireAdmin();
+): Promise<ResultadoAcao> {
+  try {
+    await requireAdmin();
+  } catch (e) {
+    return { ok: false, error: mensagemErro(e, "Apenas administradores.") };
+  }
   const supabase = await createClient();
   const user = await getCurrentUser();
 
@@ -115,7 +190,7 @@ export async function ajustarProdutoAcabado(
       .select("estoque_200ml, estoque_500ml")
       .eq("id", produto_id)
       .single();
-    if (fetchError) throw new Error(fetchError.message);
+    if (fetchError) return { ok: false, error: "Produto acabado não encontrado." };
     atual200 ??= produto.estoque_200ml ?? 0;
     atual500 ??= produto.estoque_500ml ?? 0;
   }
@@ -132,19 +207,29 @@ export async function ajustarProdutoAcabado(
     p_user_id: user?.id ?? null,
     p_user_email: user?.email ?? null,
   });
-  if (error) throw rpcError(error);
+  if (error) return { ok: false, error: rpcError(error).message };
+  revalidarProdutoAcabado();
+  return { ok: true };
 }
 
-export async function getRetiradasHoje(): Promise<RetiradasHoje[]> {
+// Retiradas de um dia (YYYY-MM-DD) no fuso America/Fortaleza.
+// Filtra por created_at (instante real) para não depender do fuso do servidor da base.
+export async function getRetiradasPorData(dataISO: string): Promise<RetiradasHoje[]> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataISO)) throw new Error("Data inválida.");
+  const { inicio, fim } = intervaloDiaFortaleza(dataISO);
   const supabase = await createClient();
-  const today = new Date().toISOString().slice(0, 10);
   const { data, error } = await supabase
     .from("produto_retiradas")
     .select("*, produtos_acabados(nome)")
-    .eq("data_retirada", today)
+    .gte("created_at", inicio)
+    .lt("created_at", fim)
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as RetiradasHoje[];
+}
+
+export async function getRetiradasHoje(): Promise<RetiradasHoje[]> {
+  return getRetiradasPorData(hojeFortaleza());
 }
 
 export async function getLotesConcluidos(): Promise<LoteConcluidoWithFormula[]> {
@@ -158,26 +243,18 @@ export async function getLotesConcluidos(): Promise<LoteConcluidoWithFormula[]> 
   return (data ?? []) as LoteConcluidoWithFormula[];
 }
 
+// Envases cujo produto de destino é este produto (lotes sem produto_acabado_id ficam de fora).
 export async function getHistoricoProduto(
-  produto_nome: string
+  produto_id: string
 ): Promise<HistoricoProdutoItem[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from("lotes_producao")
+    .from("envases")
     .select(
-      "*, formulas!inner(nome, sigla), envases(qtd_1l, qtd_2l, qtd_5l, qtd_20l, rendimento_real, data_envase)"
+      "id, lote_id, qtd_200ml, qtd_500ml, qtd_1l, qtd_2l, qtd_5l, qtd_20l, rendimento_real, data_envase, user_email, lotes_producao(numero_lote), produtos_acabados(nome)"
     )
-    .eq("status", "concluido")
-    .eq("formulas.nome", produto_nome)
-    .order("created_at", { ascending: false });
+    .eq("produto_acabado_id", produto_id)
+    .order("data_envase", { ascending: false });
   if (error) throw new Error(error.message);
-  const withEnvase = ((data ?? []) as HistoricoProdutoItem[]).filter(
-    (l) => l.envases && l.envases.length > 0
-  );
-  withEnvase.sort((a, b) => {
-    const da = a.envases[0]?.data_envase ?? "";
-    const db = b.envases[0]?.data_envase ?? "";
-    return db.localeCompare(da);
-  });
-  return withEnvase;
+  return (data ?? []) as unknown as HistoricoProdutoItem[];
 }
