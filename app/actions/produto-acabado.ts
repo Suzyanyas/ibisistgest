@@ -19,10 +19,6 @@ export type RetiradasHoje = RetiradasRow & {
   produtos_acabados: Pick<Tables<"produtos_acabados">, "nome"> | null;
 };
 
-export type LoteConcluidoWithFormula = Tables<"lotes_producao"> & {
-  formulas: Pick<Tables<"formulas">, "nome" | "sigla"> | null;
-};
-
 export type HistoricoProdutoItem = Pick<
   Tables<"envases">,
   | "id"
@@ -230,17 +226,6 @@ export async function getRetiradasPorData(dataISO: string): Promise<RetiradasHoj
 
 export async function getRetiradasHoje(): Promise<RetiradasHoje[]> {
   return getRetiradasPorData(hojeFortaleza());
-}
-
-export async function getLotesConcluidos(): Promise<LoteConcluidoWithFormula[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("lotes_producao")
-    .select("*, formulas(nome, sigla)")
-    .eq("status", "concluido")
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  return (data ?? []) as LoteConcluidoWithFormula[];
 }
 
 // Envases cujo produto de destino é este produto (lotes sem produto_acabado_id ficam de fora).
