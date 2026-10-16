@@ -10,6 +10,7 @@ import {
   getInsumosAbaixoMinimo,
   getProdutosAbaixoMinimo,
   getAtividadeRecente,
+  getPendencias,
   toggleAgendaItem,
   addAgendaItem,
   deleteAgendaItem,
@@ -19,6 +20,8 @@ import {
   type InsumoAbaixo,
   type ProdutoAbaixo,
   type AtividadeItem,
+  type Pendencias,
+  type PendenciaTipo,
 } from "@/app/actions/dashboard";
 import type { FormulaRow } from "@/app/actions/formulas";
 
@@ -59,9 +62,42 @@ function activityDotColor(action: string): string {
   if (action.includes("Novo lote")) return "#1565C0";
   if (action.includes("Entrada de insumo")) return "#16A34A";
   if (action.includes("Ajuste de insumo")) return "#F59E0B";
+  if (action.includes("Consumo de") || action.includes("Saída de insumo")) return "#8E24AA";
+  if (action.includes("Estoque inicial")) return "#00ACC1";
   if (action.includes("Retirada de produto")) return "#E53935";
   return "#9CA3AF";
 }
+
+const PENDENCIA_TEXTOS: Record<PendenciaTipo, { titulo: string; explicacao: string }> = {
+  densidade_a_confirmar: {
+    titulo: "Densidade por confirmar",
+    explicacao: "A densidade foi estimada e ainda ninguém a confirmou.",
+  },
+  estoque_estimado: {
+    titulo: "Valor estimado",
+    explicacao: "O estoque é um valor estimado, precisa de contagem.",
+  },
+  faltas_registadas: {
+    titulo: "Falta registada",
+    explicacao: "Faltou material numa produção e o estoque ainda não foi acertado.",
+  },
+  unidade_incompativel: {
+    titulo: "Unidade que não bate",
+    explicacao: "A fórmula usa uma unidade que não combina com a do estoque.",
+  },
+  produto_sem_formula: {
+    titulo: "Produto sem fórmula",
+    explicacao: "Este produto não está ligado a nenhuma fórmula.",
+  },
+  categoria_em_falta: {
+    titulo: "Embalagem sem categoria",
+    explicacao: "Parece uma embalagem, mas falta indicar o tipo no estoque.",
+  },
+  tamanho_sem_garrafa: {
+    titulo: "Embalagem não cadastrada",
+    explicacao: "Falta cadastrar a garrafa ou a tampa deste tamanho no estoque.",
+  },
+};
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
 
@@ -203,6 +239,7 @@ export default function DashboardClient({
   initialProdutosAbaixo,
   formulas,
   initialAtividadeRecente,
+  initialPendencias,
   isAdmin,
 }: {
   today: string;
@@ -213,6 +250,7 @@ export default function DashboardClient({
   initialProdutosAbaixo: ProdutoAbaixo[];
   formulas: FormulaRow[];
   initialAtividadeRecente: AtividadeItem[];
+  initialPendencias: Pendencias;
   isAdmin: boolean;
 }) {
   const router = useRouter();
@@ -229,6 +267,8 @@ export default function DashboardClient({
     useState<ProdutoAbaixo[]>(initialProdutosAbaixo);
   const [atividadeRecente, setAtividadeRecente] =
     useState<AtividadeItem[]>(initialAtividadeRecente);
+  const [pendencias, setPendencias] = useState<Pendencias>(initialPendencias);
+  const [showAllPendencias, setShowAllPendencias] = useState(false);
   const [showAllEstoque, setShowAllEstoque] = useState(false);
 
   // Modal state
@@ -254,13 +294,14 @@ export default function DashboardClient({
 
   const refresh = useCallback(async () => {
     const day = todayStr();
-    const [ah, aa, le, ia, pa, at] = await Promise.all([
+    const [ah, aa, le, ia, pa, at, pe] = await Promise.all([
       getAgendaProducao(day),
       getAgendaAtrasada(),
       getLotesEmEnvase(),
       getInsumosAbaixoMinimo(),
       getProdutosAbaixoMinimo(),
       isAdmin ? getAtividadeRecente() : Promise.resolve(null),
+      isAdmin ? getPendencias() : Promise.resolve(null),
     ]);
     setAgendaHoje(ah);
     setAgendaAtrasada(aa);
@@ -268,6 +309,7 @@ export default function DashboardClient({
     setInsumosAbaixo(ia);
     setProdutosAbaixo(pa);
     if (at) setAtividadeRecente(at);
+    if (pe) setPendencias(pe);
   }, [isAdmin]);
 
   useEffect(() => {
@@ -360,6 +402,7 @@ export default function DashboardClient({
     (a) => !agendaHoje.some((h) => h.id === a.id)
   );
   const hoje = agendaHoje;
+  const totalPendencias = pendencias.grupos.reduce((n, g) => n + g.items.length, 0);
 
   const agendaGradient = "linear-gradient(135deg, #1A3A6B 0%, #1565C0 100%)";
   const envaseGradient = "linear-gradient(135deg, #1565C0 0%, #0288D1 100%)";
@@ -846,6 +889,72 @@ export default function DashboardClient({
           </ul>
         </Card>
       </div>
+
+      {/* ── Card: Pendências (admin) ── */}
+      {isAdmin && totalPendencias > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-4">
+          <Card
+            gradient="linear-gradient(135deg, #FFF8E1 0%, #FFF3CD 100%)"
+            style={{ borderTop: "3px solid #F59E0B", boxShadow: "0 8px 32px rgba(245,158,11,0.2)" }}
+          >
+            <div
+              className="flex items-start justify-between gap-2"
+              style={{ padding: "20px 20px 12px 20px" }}
+            >
+              <p
+                className="tracking-widest"
+                style={{ fontFamily: "var(--font-lora), Georgia, serif", color: "#1A3A6B", fontSize: 13, fontWeight: 700, letterSpacing: "0.1em" }}
+              >
+                PENDÊNCIAS
+              </p>
+              <KpiBadge count={totalPendencias} variant="amber" />
+            </div>
+            <div
+              className={`flex-1 px-4 pb-4 flex flex-col ${
+                showAllPendencias ? "overflow-y-auto max-h-96" : ""
+              }`}
+            >
+              {(showAllPendencias ? pendencias.grupos : pendencias.grupos.slice(0, 2)).map((g) => (
+                <div key={g.tipo} className="mb-2">
+                  <p className="font-semibold text-gray-800" style={{ fontSize: 13 }}>
+                    {PENDENCIA_TEXTOS[g.tipo].titulo} ({g.items.length})
+                  </p>
+                  <p className="text-gray-600" style={{ fontSize: 12 }}>
+                    {PENDENCIA_TEXTOS[g.tipo].explicacao}
+                  </p>
+                  <ul>
+                    {(showAllPendencias ? g.items : g.items.slice(0, 3)).map((it) => (
+                      <li key={it.id} className="border-b border-gray-200 last:border-0">
+                        <button
+                          onClick={() => router.push(it.destino)}
+                          className="w-full text-left transition-opacity hover:opacity-80"
+                          style={{ padding: "6px 0", background: "none", border: "none", cursor: "pointer" }}
+                        >
+                          <span className="block text-gray-800 truncate" style={{ fontSize: 14 }}>
+                            {it.nome}
+                          </span>
+                          <span className="block text-gray-500" style={{ fontSize: 12 }}>
+                            {it.detalhe}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              {(pendencias.grupos.length > 2 || totalPendencias > 5) && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllPendencias((v) => !v)}
+                  className="text-xs font-semibold text-amber-700 underline cursor-pointer mt-2 self-start"
+                >
+                  {showAllPendencias ? "Ver menos" : `Ver todas (${totalPendencias})`}
+                </button>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* ── Card 5: Atividade Recente ── */}
       {isAdmin && (

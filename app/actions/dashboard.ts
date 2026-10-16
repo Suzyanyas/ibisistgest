@@ -14,6 +14,8 @@
 
 import { createClient } from "@/lib/supabase/server";
 import type { Tables } from "@/types/supabase";
+import { getUserRole } from "@/app/actions/auth-role";
+import { getUnidadesCompativeis } from "@/lib/unidades";
 
 export type AgendaItemWithFormula = Tables<"agenda_producao"> & {
   formulas: Pick<Tables<"formulas">, "nome" | "sigla"> | null;
@@ -171,7 +173,7 @@ export async function getAtividadeRecente(): Promise<AtividadeItem[]> {
       .limit(20),
     supabase
       .from("insumo_movimentos")
-      .select("tipo, quantidade, user_email, created_at, insumos(nome, unidade)")
+      .select("tipo, quantidade, falta, obs, user_email, created_at, insumos(nome, unidade)")
       .order("created_at", { ascending: false })
       .limit(20),
     supabase
@@ -209,16 +211,36 @@ export async function getAtividadeRecente(): Promise<AtividadeItem[]> {
     (movRes.data ?? []) as unknown as Array<{
       tipo: string;
       quantidade: number;
+      falta: number | null;
+      obs: string | null;
       user_email: string | null;
       created_at: string | null;
       insumos: { nome: string; unidade: string } | null;
     }>
-  ).map((m) => ({
-    action: m.tipo === "entrada" ? "Entrada de insumo" : "Ajuste de insumo",
-    detail: `${m.insumos?.nome ?? "—"}: ${m.quantidade} ${m.insumos?.unidade ?? ""}`.trim(),
-    user_email: m.user_email,
-    created_at: m.created_at ?? "",
-  }));
+  ).map((m) => {
+    const obs = m.obs ?? "";
+    let action: string;
+    if (m.tipo === "saida") {
+      if (obs.startsWith("Produção lote")) action = "Consumo de produção";
+      else if (obs.startsWith("Embalagem envase lote")) action = "Consumo de embalagem";
+      else action = "Saída de insumo";
+    } else if (m.tipo === "entrada") {
+      action = "Entrada de insumo";
+    } else if (m.tipo === "ajuste" && obs === "Estoque inicial") {
+      action = "Estoque inicial";
+    } else {
+      action = "Ajuste de insumo";
+    }
+    const unidade = m.insumos?.unidade ?? "";
+    let detail = `${m.insumos?.nome ?? "—"}: ${m.quantidade} ${unidade}`.trim();
+    if ((m.falta ?? 0) > 0) detail += ` (faltaram ${m.falta} ${unidade})`.replace(/ +\)/, ")");
+    return {
+      action,
+      detail,
+      user_email: m.user_email,
+      created_at: m.created_at ?? "",
+    };
+  });
 
   const retiradasAtividade: AtividadeItem[] = (
     (retiradasRes.data ?? []) as unknown as Array<{
@@ -248,7 +270,234 @@ export async function getAtividadeRecente(): Promise<AtividadeItem[]> {
     created_at: l.created_at ?? "",
   }));
 
-  return [...lotesAtividade, ...movAtividade, ...retiradasAtividade, ...logAtividades]
+  // Evita o mesmo evento duas vezes: o registo de log_atividades prevalece
+  // sobre o movimento do mesmo segundo e do mesmo utilizador.
+  const chaveLog = new Set(
+    logAtividades.map((l) => `${l.created_at.slice(0, 19)}|${l.user_email ?? ""}`)
+  );
+  const movSemDuplicados = movAtividade.filter(
+    (m) => !chaveLog.has(`${m.created_at.slice(0, 19)}|${m.user_email ?? ""}`)
+  );
+
+  return [...lotesAtividade, ...movSemDuplicados, ...retiradasAtividade, ...logAtividades]
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, 20);
+}
+
+// ─── Pendências (apenas admin) ───────────────────────────────────────────────
+
+export type PendenciaItem = {
+  id: string;
+  nome: string;
+  detalhe: string;
+  destino: string;
+};
+
+export type PendenciaTipo =
+  | "densidade_a_confirmar"
+  | "estoque_estimado"
+  | "faltas_registadas"
+  | "unidade_incompativel"
+  | "produto_sem_formula"
+  | "categoria_em_falta"
+  | "tamanho_sem_garrafa";
+
+export type PendenciaGrupo = {
+  tipo: PendenciaTipo;
+  items: PendenciaItem[];
+};
+
+export type Pendencias = { grupos: PendenciaGrupo[] };
+
+function normalizar(texto: string): string {
+  return texto.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+const TAMANHOS_GARRAFA: { label: string; categoria: string }[] = [
+  { label: "200ML", categoria: "garrafa_200ml" },
+  { label: "500ML", categoria: "garrafa_500ml" },
+  { label: "1L", categoria: "garrafa_1l" },
+  { label: "2L", categoria: "garrafa_2l" },
+  { label: "5L", categoria: "garrafa_5l" },
+  { label: "20L", categoria: "garrafa_20l" },
+];
+
+export async function getPendencias(): Promise<Pendencias> {
+  if ((await getUserRole()) !== "admin") return { grupos: [] };
+
+  const supabase = await createClient();
+
+  const [insRes, movRes, fiRes, paRes] = await Promise.all([
+    supabase
+      .from("insumos")
+      .select("id, nome, unidade, categoria, densidade, densidade_confirmada, estoque_estimado")
+      .order("nome"),
+    supabase
+      .from("insumo_movimentos")
+      .select("id, insumo_id, falta, obs, created_at, insumos(nome, unidade)")
+      .gt("falta", 0)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("formula_insumos")
+      .select("id, unidade, formulas(nome), insumos(nome, unidade, densidade)"),
+    supabase
+      .from("produtos_acabados")
+      .select("id, nome, formula_id")
+      .is("formula_id", null)
+      .order("nome"),
+  ]);
+
+  if (insRes.error) throw new Error(insRes.error.message);
+  if (movRes.error) throw new Error(movRes.error.message);
+  if (fiRes.error) throw new Error(fiRes.error.message);
+  if (paRes.error) throw new Error(paRes.error.message);
+
+  const insumos = insRes.data ?? [];
+  const grupos: PendenciaGrupo[] = [];
+  const add = (tipo: PendenciaTipo, items: PendenciaItem[]) => {
+    if (items.length > 0) grupos.push({ tipo, items });
+  };
+
+  // a. densidade a confirmar
+  add(
+    "densidade_a_confirmar",
+    insumos
+      .filter((i) => i.densidade != null && !i.densidade_confirmada)
+      .map((i) => ({
+        id: i.id,
+        nome: i.nome,
+        detalhe: `Densidade ${i.densidade}`,
+        destino: "/estoque-insumos",
+      }))
+  );
+
+  // b. estoque estimado
+  add(
+    "estoque_estimado",
+    insumos
+      .filter((i) => i.estoque_estimado)
+      .map((i) => ({
+        id: i.id,
+        nome: i.nome,
+        detalhe: "Valor estimado, precisa de contagem",
+        destino: "/estoque-insumos",
+      }))
+  );
+
+  // c. faltas registadas sem ajuste posterior
+  const faltas = (movRes.data ?? []) as unknown as Array<{
+    id: string;
+    insumo_id: string;
+    falta: number | null;
+    obs: string | null;
+    created_at: string | null;
+    insumos: { nome: string; unidade: string } | null;
+  }>;
+  if (faltas.length > 0) {
+    const ids = Array.from(new Set(faltas.map((f) => f.insumo_id)));
+    const ajustesRes = await supabase
+      .from("insumo_movimentos")
+      .select("insumo_id, created_at")
+      .eq("tipo", "ajuste")
+      .in("insumo_id", ids);
+    if (ajustesRes.error) throw new Error(ajustesRes.error.message);
+    const ultimoAjuste = new Map<string, string>();
+    for (const a of ajustesRes.data ?? []) {
+      const atual = ultimoAjuste.get(a.insumo_id);
+      if (a.created_at && (!atual || a.created_at > atual)) {
+        ultimoAjuste.set(a.insumo_id, a.created_at);
+      }
+    }
+    add(
+      "faltas_registadas",
+      faltas
+        .filter((f) => {
+          const aj = ultimoAjuste.get(f.insumo_id);
+          return !(aj && f.created_at && aj > f.created_at);
+        })
+        .map((f) => {
+          const lote = /lote\s+(\S+)/i.exec(f.obs ?? "")?.[1];
+          return {
+            id: f.id,
+            nome: f.insumos?.nome ?? "—",
+            detalhe: `Faltaram ${f.falta} ${f.insumos?.unidade ?? ""}${lote ? ` no lote ${lote}` : ""}`.trim(),
+            destino: "/estoque-insumos",
+          };
+        })
+    );
+  }
+
+  // d. unidade incompatível na fórmula (insumo sem densidade)
+  const formulaInsumos = (fiRes.data ?? []) as unknown as Array<{
+    id: string;
+    unidade: string;
+    formulas: { nome: string } | null;
+    insumos: { nome: string; unidade: string; densidade: number | null } | null;
+  }>;
+  add(
+    "unidade_incompativel",
+    formulaInsumos
+      .filter(
+        (fi) =>
+          fi.insumos != null &&
+          fi.insumos.densidade == null &&
+          !getUnidadesCompativeis(fi.insumos.unidade, null).includes(fi.unidade.toUpperCase())
+      )
+      .map((fi) => ({
+        id: fi.id,
+        nome: `${fi.formulas?.nome ?? "—"}: ${fi.insumos?.nome ?? "—"}`,
+        detalhe: `Na fórmula em ${fi.unidade}, no estoque em ${fi.insumos?.unidade ?? ""}`,
+        destino: "/formulas",
+      }))
+  );
+
+  // e. produto sem fórmula
+  add(
+    "produto_sem_formula",
+    (paRes.data ?? []).map((p) => ({
+      id: p.id,
+      nome: p.nome,
+      detalhe: "Sem fórmula associada",
+      destino: "/produto-acabado",
+    }))
+  );
+
+  // f. embalagem sem categoria
+  add(
+    "categoria_em_falta",
+    insumos
+      .filter((i) => {
+        if (i.categoria != null) return false;
+        const n = normalizar(i.nome);
+        return n.includes("garrafa") || n.includes("tampa") || n.includes("alca");
+      })
+      .map((i) => ({
+        id: i.id,
+        nome: i.nome,
+        detalhe: "Sem categoria definida",
+        destino: "/estoque-insumos",
+      }))
+  );
+
+  // g. tamanhos sem garrafa / sem tampa
+  const categorias = new Set(insumos.map((i) => i.categoria).filter(Boolean));
+  const semEmbalagem: PendenciaItem[] = TAMANHOS_GARRAFA.filter(
+    (t) => !categorias.has(t.categoria)
+  ).map((t) => ({
+    id: `garrafa-${t.categoria}`,
+    nome: `Sem garrafa cadastrada para ${t.label}`,
+    detalhe: `Cadastre um insumo com a categoria Garrafa ${t.label}`,
+    destino: "/estoque-insumos",
+  }));
+  if (!categorias.has("tampa")) {
+    semEmbalagem.push({
+      id: "tampa",
+      nome: "Sem tampa cadastrada",
+      detalhe: "Cadastre um insumo com a categoria Tampa",
+      destino: "/estoque-insumos",
+    });
+  }
+  add("tamanho_sem_garrafa", semEmbalagem);
+
+  return { grupos };
 }
