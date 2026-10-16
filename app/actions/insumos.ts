@@ -208,6 +208,15 @@ export async function deleteInsumo(id: string): Promise<void> {
   const supabase = await createClient();
   const user = await getCurrentUser();
 
+  // Lê nome e unidade antes de qualquer exclusão, para o histórico
+  const { data: insumoInfo, error: infoError } = await supabase
+    .from("insumos")
+    .select("nome, unidade")
+    .eq("id", id)
+    .maybeSingle();
+  if (infoError) throw new Error(infoError.message);
+  if (!insumoInfo) throw new Error("Este insumo já não existe.");
+
   const { count: loteCount, error: loteError } = await supabase
     .from("lote_insumos")
     .select("id", { count: "exact", head: true })
@@ -226,20 +235,14 @@ export async function deleteInsumo(id: string): Promise<void> {
     );
   }
 
-  const { data: insumoInfo } = await supabase
-    .from("insumos")
-    .select("nome, unidade")
-    .eq("id", id)
-    .single();
-  await logAtividade(
-    "Exclusão de insumo",
-    `${insumoInfo?.nome ?? "—"} (${insumoInfo?.unidade ?? ""})`,
-    user?.id,
-    user?.email
-  );
-
   const { error } = await supabase.from("insumos").delete().eq("id", id);
   if (error) throw new Error(error.message);
+
+  const nome = insumoInfo.nome?.trim();
+  const unidade = insumoInfo.unidade?.trim();
+  if (nome && unidade) {
+    await logAtividade("Exclusão de insumo", `${nome} (${unidade})`, user?.id, user?.email);
+  }
 }
 
 export async function getInsumosAbaixoMinimo(): Promise<{

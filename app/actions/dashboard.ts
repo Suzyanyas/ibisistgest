@@ -154,7 +154,7 @@ export async function logAtividade(
   userEmail?: string
 ): Promise<void> {
   const supabase = await createClient();
-  await (supabase as any).from("log_atividades").insert({
+  await supabase.from("log_atividades").insert({
     action,
     detail,
     user_id: userId ?? null,
@@ -181,7 +181,7 @@ export async function getAtividadeRecente(): Promise<AtividadeItem[]> {
       .select("quantidade, user_email, created_at, produtos_acabados(nome)")
       .order("created_at", { ascending: false })
       .limit(20),
-    (supabase as any)
+    supabase
       .from("log_atividades")
       .select("action, detail, user_email, created_at")
       .order("created_at", { ascending: false })

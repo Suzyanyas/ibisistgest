@@ -49,6 +49,13 @@ function AmberWarning({ msg }: { msg: string }) {
   );
 }
 
+// Aceita vírgula ou ponto como separador decimal; texto inválido ou vazio vira NaN.
+function parseDecimal(texto: string): number {
+  const t = texto.trim();
+  if (!/^(\d+([.,]\d*)?|[.,]\d+)$/.test(t)) return NaN;
+  return Number(t.replace(",", "."));
+}
+
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -236,6 +243,8 @@ export default function ProducaoClient({
   const [novoFragrancia, setNovoFragrancia] = useState("");
   const [formulaInsumosPreview, setFormulaInsumosPreview] = useState<FormulaInsumoPreview[]>([]);
   const [editableInsumos, setEditableInsumos] = useState<EditableInsumo[]>([]);
+  // texto digitado nas quantidades (admin), por insumo_id; convertido só ao validar/enviar
+  const [qtdTextos, setQtdTextos] = useState<Record<string, string>>({});
   const [previewLoading, setPreviewLoading] = useState(false);
 
   // Adicionar Insumo modal state
@@ -270,8 +279,14 @@ export default function ProducaoClient({
 
   const formulaSel = formulasList.find((f) => f.id === selFormulaId);
   const novaRows: EditableInsumo[] = isAdmin
-    ? editableInsumos
-    : formulaInsumosPreview.map((fi) => ({
+    ? editableInsumos.map((ei) => ({
+        ...ei,
+        quantidade:
+          qtdTextos[ei.insumo_id] !== undefined
+            ? parseDecimal(qtdTextos[ei.insumo_id])
+            : ei.quantidade,
+      }))
+    :formulaInsumosPreview.map((fi) => ({
         insumo_id: fi.insumo_id,
         nome: fi.insumos?.nome ?? "—",
         quantidade: fi.quantidade,
@@ -322,6 +337,7 @@ export default function ProducaoClient({
     setNovoFragrancia("");
     setFormulaInsumosPreview([]);
     setEditableInsumos([]);
+    setQtdTextos({});
     setSelInsumoId("");
     setInsQtd("");
     setInsUnidade("KG");
@@ -423,6 +439,7 @@ export default function ProducaoClient({
     setPreviewLoading(true);
     setFormulaInsumosPreview([]);
     setEditableInsumos([]);
+    setQtdTextos({});
     try {
       const preview = await getFormulaInsumos(formulaId);
       setFormulaInsumosPreview(preview);
@@ -496,7 +513,7 @@ export default function ProducaoClient({
     setInlineError(null);
     setInlineSaving(true);
     try {
-      const overrides = isAdmin && editableInsumos.length > 0 ? editableInsumos : undefined;
+      const overrides = isAdmin && editableInsumos.length > 0 ? novaRows : undefined;
       const newLote = await createLote(selFormulaId, novoNumeroLote.trim(), novoData, overrides, novoFragrancia.trim() || undefined);
       await refreshLotes();
       refresh();
@@ -827,7 +844,7 @@ export default function ProducaoClient({
                           </thead>
                           <tbody>
                             {isAdmin
-                              ? editableInsumos.map((item, idx) => {
+                              ? novaRows.map((item, idx) => {
                                   const { erro, avisos } = analisarLinha(item);
                                   return (
                                   <tr key={item.insumo_id} style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
@@ -838,15 +855,11 @@ export default function ProducaoClient({
                                     <td className="px-3 py-2">
                                       <input
                                         type="text"
-                                        inputMode="numeric"
-                                        value={item.quantidade}
+                                        inputMode="decimal"
+                                        value={qtdTextos[item.insumo_id] ?? String(item.quantidade)}
                                         onChange={(e) => {
                                           const val = e.target.value;
-                                          setEditableInsumos((prev) =>
-                                            prev.map((ei, i) =>
-                                              i === idx ? { ...ei, quantidade: parseFloat(val) || 0 } : ei
-                                            )
-                                          );
+                                          setQtdTextos((prev) => ({ ...prev, [item.insumo_id]: val }));
                                         }}
                                         className="border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-600"
                                         style={{ maxWidth: 100 }}

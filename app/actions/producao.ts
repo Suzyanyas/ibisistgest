@@ -120,7 +120,7 @@ export async function addInsumoToLote(
   const { error } = await supabase
     .from("lote_insumos")
     .insert({ lote_id, insumo_id, quantidade, unidade });
-  if (error) throw new Error(error.message);
+  if (error) throw rpcError(error);
 }
 
 export async function removeInsumoFromLote(id: string): Promise<void> {
