@@ -326,21 +326,25 @@ export default function EnvaseClient({
     const fragancia = selectedLote.fragancia;
 
     const dataProducao = new Date(selectedLote.data_producao);
-    const dataValidade = new Date(dataProducao);
-    dataValidade.setMonth(dataValidade.getMonth() + 18);
     const fabStr = formatDateDDMMYYYY(dataProducao);
-    const valStr = formatDateDDMMYYYY(dataValidade);
 
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: [80, 20] });
     let firstPage = true;
 
-    function truncateToWidth(text: string, maxWidth: number): string {
-      if (doc.getTextWidth(text) <= maxWidth) return text;
-      let truncated = text;
-      while (truncated.length > 0 && doc.getTextWidth(truncated + "...") > maxWidth) {
-        truncated = truncated.slice(0, -1);
+    const LABEL_TEXT_WIDTH = 38;
+    const FONT_BASE = 5;
+    const FONT_NOME = FONT_BASE * 1.2;
+    const FONT_DEMAIS = FONT_BASE * 1.3;
+    const FONT_MIN = 3;
+
+    // Reduz apenas o necessario para a linha caber em uma unica linha.
+    function drawFitted(text: string, x: number, y: number, size: number) {
+      doc.setFontSize(size);
+      while (size > FONT_MIN && doc.getTextWidth(text) > LABEL_TEXT_WIDTH) {
+        size = Math.round((size - 0.1) * 10) / 10;
+        doc.setFontSize(size);
       }
-      return truncated + "...";
+      doc.text(text, x, y);
     }
 
     function drawLabel(xOffset: number, tamanho: { label: string; nomeCompleto: string }) {
@@ -348,25 +352,24 @@ export default function EnvaseClient({
       const canvas = document.createElement("canvas");
       JsBarcode(canvas, barcodeValue, { format: "CODE128", displayValue: false });
       const barcodeData = canvas.toDataURL("image/png");
-      doc.addImage(barcodeData, "PNG", xOffset + 1, 1, 38, 8);
+      doc.addImage(barcodeData, "PNG", xOffset + 1, 0, 38, 8);
 
-      const maxWidth = 38;
-      let y = 11;
+      const x = xOffset + 1;
+      let y = 10.4;
+      const passo = 2.6;
 
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(5);
       const linha1 = `${produtoNome} ${tamanho.nomeCompleto}`.toUpperCase();
-      doc.text(truncateToWidth(linha1, maxWidth), xOffset + 1, y);
-      y += 2;
+      drawFitted(linha1, x, y, FONT_NOME);
+      y += passo;
 
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(5);
-      doc.text(`LOTE: ${numeroLote}`.toUpperCase(), xOffset + 1, y);
-      y += 2;
-      doc.text(`FAB: ${fabStr}  VAL: ${valStr}`, xOffset + 1, y);
+      drawFitted(`LOTE: ${numeroLote}`.toUpperCase(), x, y, FONT_DEMAIS);
+      y += passo;
+      drawFitted(`FAB: ${fabStr}  VAL: 180 DIAS`, x, y, FONT_DEMAIS);
       if (fragancia) {
-        y += 2;
-        doc.text(`FRAGANCIA: ${fragancia}`, xOffset + 1, y);
+        y += passo;
+        drawFitted(`FRAGANCIA: ${fragancia}`, x, y, FONT_DEMAIS);
       }
     }
 
