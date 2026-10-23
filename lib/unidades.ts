@@ -42,6 +42,46 @@ export function converterUnidade(
   return null;
 }
 
+// A conversão exige densidade quando mistura massa (KG, G) e volume (L, ML)
+export function exigeDensidade(de: string, para: string): boolean {
+  const d = de.trim().toUpperCase();
+  const p = para.trim().toUpperCase();
+  return (d in MASSA && p in VOLUME) || (d in VOLUME && p in MASSA);
+}
+
+export type CustoLinha = {
+  // Custo da linha; 0 quando não foi possível calcular (veja aviso)
+  custo: number;
+  // null quando o custo foi calculado; senão o motivo, para exibir na linha
+  aviso: string | null;
+};
+
+// Custo de uma linha de fórmula: quantidade (na unidade da fórmula) convertida para a
+// unidade em que o custo do insumo é informado, usando a mesma conversão do estoque
+// (converterUnidade / converter_unidade da base). Ex.: 1 KG de insumo com custo por L e
+// densidade 0,9 g/ml = 1000 g / 0,9 = 1,111 L; a 3,00/L custa 3,33.
+export function calcularCustoLinha(
+  quantidade: number,
+  unidadeFormula: string,
+  custoUnitario: number | null | undefined,
+  custoUnidade: string | null | undefined,
+  densidade?: number | null
+): CustoLinha {
+  if (!custoUnidade || custoUnitario == null || Number(custoUnitario) <= 0) {
+    return { custo: 0, aviso: "custo não definido" };
+  }
+  const convertida = converterUnidade(quantidade, unidadeFormula, custoUnidade, densidade);
+  if (convertida === null) {
+    return {
+      custo: 0,
+      aviso: exigeDensidade(unidadeFormula, custoUnidade)
+        ? "densidade necessária"
+        : "unidade incompatível",
+    };
+  }
+  return { custo: convertida * Number(custoUnitario), aviso: null };
+}
+
 export function unidadeIncompativel(
   unidade: string,
   unidadeBase: string,

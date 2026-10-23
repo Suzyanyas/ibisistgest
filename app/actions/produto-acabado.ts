@@ -7,6 +7,7 @@ import { logAtividade } from "@/app/actions/dashboard";
 import { rpcError } from "@/lib/supabase/rpc-error";
 import { hojeFortaleza, intervaloDiaFortaleza } from "@/lib/fortaleza";
 import type { Tables } from "@/types/supabase";
+import { ErroAcao, falha } from "@/lib/acao";
 import type { RpcResultadoMesclar, RpcResultadoOk } from "@/types/rpc";
 
 export type ProdutoAcabadoRow = Tables<"produtos_acabados">;
@@ -43,13 +44,14 @@ export type HistoricoProdutoItem = Pick<
 
 export type ResultadoAcao = { ok: true } | { ok: false; error: string };
 
+// /produto-acabado não é revalidada: a tela guarda a lista em estado e recarrega por conta própria
+// (revalidar a página atual faz o servidor renderizá-la dentro da resposta da action).
 function revalidarProdutoAcabado() {
   revalidatePath("/");
-  revalidatePath("/produto-acabado");
 }
 
 function mensagemErro(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return e instanceof ErroAcao ? e.message : fallback;
 }
 
 type ContagemEmbutida = { count: number }[] | null;
@@ -81,10 +83,15 @@ export async function getProdutosAcabados(
     .select("*, envases(count), produto_retiradas(count)")
     .order("nome");
   if (!mostrarArquivados) query = query.eq("ativo", true);
-  const { data, error } = await query;
+  // Produtos e nomes das fórmulas (tabela pequena) não dependem um do outro: rodam juntos
+  const [{ data, error }, formulasRes] = await Promise.all([
+    query,
+    supabase.from("formulas").select("id, nome"),
+  ]);
   if (error) throw new Error(error.message);
+  if (formulasRes.error) throw new Error(formulasRes.error.message);
   const linhas = data ?? [];
-  const nomes = await nomesDeFormulas(linhas.map((p) => p.formula_id));
+  const nomes = new Map((formulasRes.data ?? []).map((f) => [f.id, f.nome]));
   return linhas.map(({ envases, produto_retiradas, ...p }) => ({
     ...p,
     estoque_baixo: p.ativo && p.estoque_atual <= p.estoque_seguranca,
@@ -110,7 +117,7 @@ export type CreateProdutoAcabadoInput = {
   obs: string;
 };
 
-export async function createProdutoAcabado(
+async function createProdutoAcabadoInterno(
   input: CreateProdutoAcabadoInput
 ): Promise<ResultadoAcao> {
   const nome = input.nome.trim();
@@ -146,23 +153,38 @@ export async function createProdutoAcabado(
   });
   if (error) return { ok: false, error: rpcError(error).message };
 
-  try {
-    await logAtividade(
-      input.origem === "produto_de_fora" ? "Produto de fora" : "Estoque inicial",
-      obs ? `${nome} | ${obs}` : nome,
-      user?.id,
-      user?.email
-    );
-  } catch {
-    // o produto já foi criado; falha no histórico não deve desfazer a operação
+  // criar_produto_acabado já registra "Novo produto acabado" e, havendo estoque, "Estoque inicial"
+  // com as quantidades por tamanho. Aqui só entra o que a função não sabe: a origem e a
+  // observação. Estoque inicial sem observação não precisa de um segundo registro.
+  if (input.origem === "produto_de_fora" || obs) {
+    try {
+      await logAtividade(
+        input.origem === "produto_de_fora" ? "Produto de fora" : "Observação do estoque inicial",
+        obs ? `${nome} | ${obs}` : nome,
+        user?.id,
+        user?.email
+      );
+    } catch {
+      // o produto já foi criado; falha no histórico não deve desfazer a operação
+    }
   }
 
   revalidarProdutoAcabado();
   return { ok: true };
 }
 
+export async function createProdutoAcabado(
+  input: CreateProdutoAcabadoInput
+): Promise<ResultadoAcao> {
+  try {
+    return await createProdutoAcabadoInterno(input);
+  } catch (e) {
+    return falha("createProdutoAcabado", e);
+  }
+}
+
 // Tamanhos 200ml e 500ml ficam no fim, com 0 por padrão, para manter as chamadas existentes.
-export async function registrarRetirada(
+async function registrarRetiradaInterno(
   produto_id: string,
   qtd_1l: number,
   qtd_2l: number,
@@ -191,9 +213,19 @@ export async function registrarRetirada(
   return { ok: true };
 }
 
+export async function registrarRetirada(
+  ...args: Parameters<typeof registrarRetiradaInterno>
+): Promise<ResultadoAcao> {
+  try {
+    return await registrarRetiradaInterno(...args);
+  } catch (e) {
+    return falha("registrarRetirada", e);
+  }
+}
+
 // Define o estoque absoluto por tamanho. 200ml/500ml omitidos mantêm o valor atual.
 // Ordem dos argumentos: produto_id, 1L, 2L, 5L, 20L, 200ml, 500ml, obs.
-export async function ajustarProdutoAcabado(
+async function ajustarProdutoAcabadoInterno(
   produto_id: string,
   estoque_1l: number,
   estoque_2l: number,
@@ -241,6 +273,16 @@ export async function ajustarProdutoAcabado(
   return { ok: true };
 }
 
+export async function ajustarProdutoAcabado(
+  ...args: Parameters<typeof ajustarProdutoAcabadoInterno>
+): Promise<ResultadoAcao> {
+  try {
+    return await ajustarProdutoAcabadoInterno(...args);
+  } catch (e) {
+    return falha("ajustarProdutoAcabado", e);
+  }
+}
+
 // Retiradas de um dia (YYYY-MM-DD) no fuso America/Fortaleza.
 // Filtra por created_at (instante real) para não depender do fuso do servidor da base.
 export async function getRetiradasPorData(dataISO: string): Promise<RetiradasHoje[]> {
@@ -281,7 +323,6 @@ export async function getHistoricoProduto(
 
 function revalidarGestaoProdutos() {
   revalidatePath("/");
-  revalidatePath("/produto-acabado");
   revalidatePath("/envase");
 }
 

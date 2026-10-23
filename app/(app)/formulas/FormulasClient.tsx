@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { erroTela } from "@/lib/erro-tela";
+import { useEffect, useRef, useState } from "react";
 import { Trash2, AlertTriangle, FlaskConical, Copy } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
@@ -19,7 +20,7 @@ import {
   type InsumoBasic,
 } from "@/app/actions/formulas";
 import { updateCustoInsumo } from "@/app/actions/insumos";
-import { getUnidadesCompativeis, converterUnidade } from "@/lib/unidades";
+import { getUnidadesCompativeis, converterUnidade, calcularCustoLinha } from "@/lib/unidades";
 
 type ModalType = null | "nova" | "editar" | "duplicar" | "addInsumo" | "excluir" | "editInsumo" | "removeInsumo";
 
@@ -87,16 +88,6 @@ function Avisos({ avisos }: { avisos: string[] }) {
 function isFraganciaInsumo(nome: string): boolean {
   const lower = nome.toLowerCase();
   return lower.includes("ess") || lower.includes("essencia") || lower.includes("fragran");
-}
-
-function convertToBase(quantidade: number, fromUnit: string, toUnit: string): number {
-  if (fromUnit === toUnit) return quantidade;
-  if (fromUnit === "G" && toUnit === "KG") return quantidade / 1000;
-  if (fromUnit === "KG" && toUnit === "G") return quantidade * 1000;
-  if (fromUnit === "ML" && toUnit === "L") return quantidade / 1000;
-  if (fromUnit === "L" && toUnit === "ML") return quantidade * 1000;
-  console.warn(`convertToBase: unidades incompatíveis (${fromUnit} -> ${toUnit})`);
-  return 0;
 }
 
 // ─── Shared UI ─────────────────────────────────────────────────────────────────
@@ -259,7 +250,6 @@ export default function FormulasClient({
   focusId: string | null;
 }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
 
   const [formulas, setFormulas] = useState<FormulaRow[]>(initialFormulas);
   const [destaqueId, setDestaqueId] = useState<string | null>(
@@ -310,7 +300,7 @@ export default function FormulasClient({
 
   // Save pending (evita duplo clique em SALVAR)
   const [saving, setSaving] = useState(false);
-  const busy = isPending || saving;
+  const busy = saving;
   async function comSalvando(fn: () => Promise<void>) {
     if (saving) return;
     setSaving(true);
@@ -322,10 +312,6 @@ export default function FormulasClient({
   }
 
   // ── Helpers ──
-
-  function refresh() {
-    startTransition(() => router.refresh());
-  }
 
   function closeModal() {
     setModal(null);
@@ -354,7 +340,7 @@ export default function FormulasClient({
       const d = await getFormulaWithInsumos(id);
       setDetail(d);
     } catch (e) {
-      setDetailError(e instanceof Error ? e.message : "Erro ao carregar.");
+      setDetailError(erroTela(e, "Erro ao carregar."));
     } finally {
       setDetailLoading(false);
     }
@@ -422,7 +408,7 @@ export default function FormulasClient({
       const list = await getInsumosList();
       setInsumosList(list);
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao carregar insumos.");
+      setModalError(erroTela(e, "Erro ao carregar insumos."));
     } finally {
       setInsumosLoading(false);
     }
@@ -461,7 +447,7 @@ export default function FormulasClient({
         setInsUnidade(list[0].unidade);
       }
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao carregar insumos.");
+      setModalError(erroTela(e, "Erro ao carregar insumos."));
     } finally {
       setInsumosLoading(false);
     }
@@ -484,7 +470,7 @@ export default function FormulasClient({
     try {
       setInsumosList(await getInsumosList());
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao carregar insumos.");
+      setModalError(erroTela(e, "Erro ao carregar insumos."));
     }
   }
 
@@ -511,21 +497,22 @@ export default function FormulasClient({
     if (err) return setModalError(err);
     setModalError(null);
     try {
-      const nova = await createFormula({
+      const r = await createFormula({
         nome: form.nome.trim(),
         sigla: form.sigla.trim().toUpperCase(),
         rendimento: parseFloat(form.rendimento),
         rendimento_unidade: form.rendimento_unidade,
         obs: form.obs.trim() || null,
       });
+      if (!r.ok) return setModalError(r.error);
+      const nova = r.data;
       setFormulas((prev) =>
         [...prev, nova].sort((a, b) => a.nome.localeCompare(b.nome))
       );
       closeModal();
-      refresh();
       selectFormula(nova.id);
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao salvar.");
+      setModalError(erroTela(e, "Erro ao salvar."));
     }
   }
 
@@ -535,13 +522,14 @@ export default function FormulasClient({
     if (err) return setModalError(err);
     setModalError(null);
     try {
-      await updateFormula(selectedId, {
+      const r = await updateFormula(selectedId, {
         nome: form.nome.trim(),
         sigla: form.sigla.trim().toUpperCase(),
         rendimento: parseFloat(form.rendimento),
         rendimento_unidade: form.rendimento_unidade,
         obs: form.obs.trim() || null,
       });
+      if (!r.ok) return setModalError(r.error);
       setFormulas((prev) =>
         prev
           .map((f) =>
@@ -559,10 +547,9 @@ export default function FormulasClient({
           .sort((a, b) => a.nome.localeCompare(b.nome))
       );
       closeModal();
-      refresh();
       await reloadDetail();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao salvar.");
+      setModalError(erroTela(e, "Erro ao salvar."));
     }
   }
 
@@ -586,20 +573,21 @@ export default function FormulasClient({
     setModalError(null);
     setDupSaving(true);
     try {
-      const nova = await duplicarFormula(
+      const r = await duplicarFormula(
         selectedId,
         dupNome.trim(),
         dupSigla.trim().toUpperCase(),
         insumoOverrides
       );
+      if (!r.ok) return setModalError(r.error);
+      const nova = r.data;
       setFormulas((prev) =>
         [...prev, nova].sort((a, b) => a.nome.localeCompare(b.nome))
       );
       closeModal();
-      refresh();
       await selectFormula(nova.id);
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao duplicar.");
+      setModalError(erroTela(e, "Erro ao duplicar."));
     } finally {
       setDupSaving(false);
     }
@@ -609,14 +597,14 @@ export default function FormulasClient({
     if (!selectedId) return;
     setModalError(null);
     try {
-      await deleteFormula(selectedId);
+      const r = await deleteFormula(selectedId);
+      if (!r.ok) return setModalError(r.error);
       setFormulas((prev) => prev.filter((f) => f.id !== selectedId));
       setSelectedId(null);
       setDetail(null);
       closeModal();
-      refresh();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao excluir.");
+      setModalError(erroTela(e, "Erro ao excluir."));
     }
   }
 
@@ -626,12 +614,12 @@ export default function FormulasClient({
     if (isNaN(qtd) || qtd <= 0) return setModalError("Quantidade deve ser positiva.");
     setModalError(null);
     try {
-      await addInsumoToFormula(selectedId, selInsumoId, qtd, insUnidade);
+      const r = await addInsumoToFormula(selectedId, selInsumoId, qtd, insUnidade);
+      if (!r.ok) return setModalError(r.error);
       closeModal();
-      refresh();
       await reloadDetail();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao adicionar.");
+      setModalError(erroTela(e, "Erro ao adicionar."));
     }
   }
 
@@ -643,12 +631,12 @@ export default function FormulasClient({
     setPinError(null);
     setModalError(null);
     try {
-      await updateFormulaInsumo(targetInsumo.id, qtd, editInsUnidade);
+      const r = await updateFormulaInsumo(targetInsumo.id, qtd, editInsUnidade);
+      if (!r.ok) return setModalError(r.error);
       closeModal();
-      refresh();
       await reloadDetail();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao salvar.");
+      setModalError(erroTela(e, "Erro ao salvar."));
     }
   }
 
@@ -658,7 +646,8 @@ export default function FormulasClient({
     setPinError(null);
     setModalError(null);
     try {
-      await removeInsumoFromFormula(targetInsumo.id);
+      const r = await removeInsumoFromFormula(targetInsumo.id);
+      if (!r.ok) return setModalError(r.error);
       setDetail((prev) =>
         prev
           ? {
@@ -668,9 +657,8 @@ export default function FormulasClient({
           : prev
       );
       closeModal();
-      refresh();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao remover.");
+      setModalError(erroTela(e, "Erro ao remover."));
     }
   }
 
@@ -680,11 +668,12 @@ export default function FormulasClient({
     setCustoError(null);
     setCustoSaving(true);
     try {
-      await updateCustoInsumo(insumoId, val, editingCustoUnidade);
+      const r = await updateCustoInsumo(insumoId, val, editingCustoUnidade);
+      if (!r.ok) return setCustoError(r.error);
       await reloadDetail();
       setEditingCustoId(null);
     } catch (e) {
-      setCustoError(e instanceof Error ? e.message : "Erro ao salvar.");
+      setCustoError(erroTela(e, "Erro ao salvar."));
     } finally {
       setCustoSaving(false);
     }
@@ -934,8 +923,13 @@ export default function FormulasClient({
                   {detail.formula_insumos.map((fi, idx) => {
                     const custoUnit = Number(fi.insumos?.custo_unitario ?? 0);
                     const custoUnidade = fi.insumos?.custo_unidade ?? null;
-                    const qtdConvertida = custoUnidade ? convertToBase(fi.quantidade, fi.unidade, custoUnidade) : 0;
-                    const custoTotal = qtdConvertida * custoUnit;
+                    const linhaCusto = calcularCustoLinha(
+                      fi.quantidade,
+                      fi.unidade,
+                      fi.insumos?.custo_unitario,
+                      custoUnidade,
+                      fi.insumos?.densidade
+                    );
                     const isEditingThis = editingCustoId === fi.id;
                     return (
                       <tr key={fi.id} className="table-row-hover" style={{ backgroundColor: idx % 2 === 0 ? "#F0F7FF" : "#ffffff" }}>
@@ -1003,7 +997,17 @@ export default function FormulasClient({
                               )}
                             </td>
                             <td className="px-4 py-4 text-gray-700">
-                              {custoTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                              {linhaCusto.aviso ? (
+                                <span
+                                  className="text-xs rounded px-2 py-1 font-semibold"
+                                  style={{ backgroundColor: "#FEF3C7", color: "#B45309" }}
+                                  title="Esta linha não entra no custo total"
+                                >
+                                  {linhaCusto.aviso}
+                                </span>
+                              ) : (
+                                linhaCusto.custo.toLocaleString("pt-BR", { minimumFractionDigits: 2 })
+                              )}
                             </td>
                           </>
                         )}
@@ -1046,12 +1050,17 @@ export default function FormulasClient({
                     );
                   })}
                   {isAdmin && detail.formula_insumos.length > 0 && (() => {
-                    const totalCusto = detail.formula_insumos.reduce((sum, fi) => {
-                      const custoUnit = Number(fi.insumos?.custo_unitario ?? 0);
-                      const custoUnidade = fi.insumos?.custo_unidade ?? null;
-                      const qtdConvertida = custoUnidade ? convertToBase(fi.quantidade, fi.unidade, custoUnidade) : 0;
-                      return sum + qtdConvertida * custoUnit;
-                    }, 0);
+                    const linhasCusto = detail.formula_insumos.map((fi) =>
+                      calcularCustoLinha(
+                        fi.quantidade,
+                        fi.unidade,
+                        fi.insumos?.custo_unitario,
+                        fi.insumos?.custo_unidade,
+                        fi.insumos?.densidade
+                      )
+                    );
+                    const totalCusto = linhasCusto.reduce((sum, l) => sum + l.custo, 0);
+                    const semCusto = linhasCusto.filter((l) => l.aviso).length;
                     return (
                       <tr className="table-row-hover" style={{ backgroundColor: "#E8F4FF", borderTop: "2px solid #1565C0" }}>
                         <td colSpan={4} className="px-4 py-3" style={{ fontWeight: 700, fontSize: 15, color: "#1A3A6B" }}>
@@ -1059,6 +1068,14 @@ export default function FormulasClient({
                         </td>
                         <td className="px-4 py-3" style={{ fontWeight: 700, fontSize: 15, color: "#1A3A6B" }}>
                           R$ {totalCusto.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          {semCusto > 0 && (
+                            <span
+                              className="block text-xs font-semibold"
+                              style={{ color: "#B45309" }}
+                            >
+                              Parcial: {semCusto} linha(s) sem custo calculado
+                            </span>
+                          )}
                         </td>
                         <td />
                       </tr>
@@ -1292,7 +1309,7 @@ export default function FormulasClient({
               onCancel={closeModal}
               onSave={handleSaveDuplicar}
               saveLabel={dupSaving ? "Duplicando..." : "DUPLICAR"}
-              disabled={dupSaving || isPending}
+              disabled={dupSaving}
             />
           </div>
         </Modal>
@@ -1475,10 +1492,10 @@ export default function FormulasClient({
             <ErrorMsg msg={modalError} />
             <ModalActions
               onCancel={closeModal}
-              onSave={handleRemoveInsumoConfirm}
+              onSave={() => comSalvando(handleRemoveInsumoConfirm)}
               saveLabel="REMOVER"
               saveColor="#C62828"
-              disabled={isPending}
+              disabled={busy}
             />
           </div>
         </Modal>
@@ -1522,12 +1539,12 @@ export default function FormulasClient({
                   CANCELAR
                 </button>
                 <button
-                  onClick={handleDelete}
-                  disabled={isPending}
+                  onClick={() => comSalvando(handleDelete)}
+                  disabled={busy}
                   className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
                   style={{ backgroundColor: "#C62828", boxShadow: "0 4px 16px rgba(198,40,40,0.4)" }}
                 >
-                  {isPending ? "Excluindo..." : "EXCLUIR"}
+                  {busy ? "Excluindo..." : "EXCLUIR"}
                 </button>
               </div>
             </div>

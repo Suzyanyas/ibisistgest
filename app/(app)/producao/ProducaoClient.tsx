@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { erroTela } from "@/lib/erro-tela";
+import { useState, useEffect } from "react";
 import { Trash2, Pencil, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -221,7 +222,6 @@ export default function ProducaoClient({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [isPending, startTransition] = useTransition();
 
   const [lotes, setLotes] = useState<LoteWithFormula[]>(initialLotes);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -324,10 +324,6 @@ export default function ProducaoClient({
 
   // ── Helpers ──
 
-  function refresh() {
-    startTransition(() => router.refresh());
-  }
-
   function closeModal() {
     setModal(null);
     setModalError(null);
@@ -365,7 +361,7 @@ export default function ProducaoClient({
       const d = await getLoteWithInsumos(id);
       setDetail(d);
     } catch (e) {
-      setDetailError(e instanceof Error ? e.message : "Erro ao carregar.");
+      setDetailError(erroTela(e, "Erro ao carregar."));
     } finally {
       setDetailLoading(false);
     }
@@ -471,7 +467,7 @@ export default function ProducaoClient({
         setInsUnidade(list[0].unidade);
       }
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao carregar insumos.");
+      setModalError(erroTela(e, "Erro ao carregar insumos."));
     } finally {
       setInsumosLoading(false);
     }
@@ -514,14 +510,15 @@ export default function ProducaoClient({
     setInlineSaving(true);
     try {
       const overrides = isAdmin && editableInsumos.length > 0 ? novaRows : undefined;
-      const newLote = await createLote(selFormulaId, novoNumeroLote.trim(), novoData, overrides, novoFragrancia.trim() || undefined);
-      await refreshLotes();
-      refresh();
+      const r = await createLote(selFormulaId, novoNumeroLote.trim(), novoData, overrides, novoFragrancia.trim() || undefined);
+      if (!r.ok) return setInlineError(r.error);
+      const newLote = r.data;
       setSelectedId(newLote.id);
       setMobileSidebarOpen(false);
-      await loadDetail(newLote.id);
+      // lista lateral e detalhe do novo lote em paralelo
+      await Promise.all([refreshLotes(), loadDetail(newLote.id)]);
     } catch (e) {
-      setInlineError(e instanceof Error ? e.message : "Erro ao criar lote.");
+      setInlineError(erroTela(e, "Erro ao criar lote."));
     } finally {
       setInlineSaving(false);
     }
@@ -534,12 +531,12 @@ export default function ProducaoClient({
     setModalError(null);
     setModalSaving(true);
     try {
-      await addInsumoToLote(selectedId, selInsumoId, qtd, insUnidade);
+      const r = await addInsumoToLote(selectedId, selInsumoId, qtd, insUnidade);
+      if (!r.ok) return setModalError(r.error);
       closeModal();
-      refresh();
       await reloadDetail();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao adicionar insumo.");
+      setModalError(erroTela(e, "Erro ao adicionar insumo."));
     } finally {
       setModalSaving(false);
     }
@@ -552,13 +549,16 @@ export default function ProducaoClient({
     if (isNaN(qtd) || qtd <= 0) return setModalError("Quantidade deve ser positiva.");
     setPinError(null);
     setModalError(null);
+    setModalSaving(true);
     try {
-      await updateInsumoLote(targetInsumo.id, qtd, editInsUnidade);
+      const r = await updateInsumoLote(targetInsumo.id, qtd, editInsUnidade);
+      if (!r.ok) return setModalError(r.error);
       closeModal();
-      refresh();
       await reloadDetail();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao salvar.");
+      setModalError(erroTela(e, "Erro ao salvar."));
+    } finally {
+      setModalSaving(false);
     }
   }
 
@@ -567,13 +567,16 @@ export default function ProducaoClient({
     if (pin !== "1234") return setPinError("PIN incorreto.");
     setPinError(null);
     setModalError(null);
+    setModalSaving(true);
     try {
-      await removeInsumoFromLote(targetInsumo.id);
+      const r = await removeInsumoFromLote(targetInsumo.id);
+      if (!r.ok) return setModalError(r.error);
       closeModal();
-      refresh();
       await reloadDetail();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao remover.");
+      setModalError(erroTela(e, "Erro ao remover."));
+    } finally {
+      setModalSaving(false);
     }
   }
 
@@ -582,47 +585,53 @@ export default function ProducaoClient({
     if (pin !== "1234") return setPinError("PIN incorreto.");
     setPinError(null);
     setModalError(null);
+    setModalSaving(true);
     try {
-      await deleteLote(selectedId);
+      const r = await deleteLote(selectedId);
+      if (!r.ok) return setModalError(r.error);
       setLotes((prev) => prev.filter((l) => l.id !== selectedId));
       setSelectedId(null);
       setDetail(null);
       closeModal();
-      refresh();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao excluir.");
+      setModalError(erroTela(e, "Erro ao excluir."));
+    } finally {
+      setModalSaving(false);
     }
   }
 
   async function executarMoverEnvase(confirmarFalta: boolean) {
     if (!selectedId || actionLoading) return;
     setActionLoading(true);
-    let ok = false;
-    let novasFaltas: FaltaItem[] = [];
-    let erro: string | null = null;
     try {
-      const r = await moverLoteParaEnvase(selectedId, confirmarFalta);
-      if (r.ok) ok = true;
-      else novasFaltas = r.faltas;
-    } catch (e) {
-      erro = e instanceof Error ? e.message : "Erro ao atualizar status.";
+      let ok = false;
+      let novasFaltas: FaltaItem[] = [];
+      let erro: string | null = null;
+      try {
+        const r = await moverLoteParaEnvase(selectedId, confirmarFalta);
+        if (r.ok) ok = true;
+        else if ("faltas" in r) novasFaltas = r.faltas;
+        else erro = r.error;
+      } catch (e) {
+        erro = erroTela(e, "Erro ao atualizar status.");
+      }
+      // sucesso ou falha: o estado vem sempre do servidor (lista e detalhe em paralelo)
+      await Promise.all([refreshLotes(), reloadDetail()]);
+      if (ok) {
+        closeModal();
+        router.push(`/envase?lote_id=${selectedId}`);
+        return;
+      }
+      if (erro === null) {
+        setFaltas(novasFaltas);
+        setModal("faltaEstoque");
+      } else {
+        closeModal();
+        setDetailError(erro);
+      }
+    } finally {
+      setActionLoading(false);
     }
-    // sucesso ou falha: o estado vem sempre do servidor
-    await refreshLotes();
-    await reloadDetail();
-    if (ok) {
-      closeModal();
-      router.push(`/envase?lote_id=${selectedId}`);
-      return;
-    }
-    if (erro === null) {
-      setFaltas(novasFaltas);
-      setModal("faltaEstoque");
-    } else {
-      closeModal();
-      setDetailError(erro);
-    }
-    setActionLoading(false);
   }
 
   function handleMoverEnvase() {
@@ -636,7 +645,9 @@ export default function ProducaoClient({
     setLoteEditError(null);
     setLoteEditSaving(true);
     try {
-      const updated = await updateLote(selectedId, editNumeroLote.trim(), editDataProducao, editFragrancia.trim() || undefined);
+      const r = await updateLote(selectedId, editNumeroLote.trim(), editDataProducao, editFragrancia.trim() || undefined);
+      if (!r.ok) return setLoteEditError(r.error);
+      const updated = r.data;
       setLotes((prev) =>
         prev.map((l) =>
           l.id === selectedId
@@ -644,11 +655,10 @@ export default function ProducaoClient({
             : l
         )
       );
-      refresh();
       await reloadDetail();
       setEditingLoteHeader(false);
     } catch (e) {
-      setLoteEditError(e instanceof Error ? e.message : "Erro ao salvar.");
+      setLoteEditError(erroTela(e, "Erro ao salvar."));
     } finally {
       setLoteEditSaving(false);
     }
@@ -928,7 +938,7 @@ export default function ProducaoClient({
 
                   <button
                     onClick={handleIniciarProducao}
-                    disabled={inlineSaving || isPending || formulasLoading}
+                    disabled={inlineSaving || formulasLoading}
                     style={{
                       backgroundColor: "#1565C0",
                       color: "white",
@@ -938,8 +948,8 @@ export default function ProducaoClient({
                       fontSize: 15,
                       width: "100%",
                       border: "none",
-                      cursor: inlineSaving || isPending ? "not-allowed" : "pointer",
-                      opacity: inlineSaving || isPending || formulasLoading ? 0.7 : 1,
+                      cursor: inlineSaving ? "not-allowed" : "pointer",
+                      opacity: inlineSaving || formulasLoading ? 0.7 : 1,
                       marginTop: 8,
                     }}
                   >
@@ -1078,7 +1088,7 @@ export default function ProducaoClient({
                 {detail.status === "producao" && (
                   <button
                     onClick={handleMoverEnvase}
-                    disabled={actionLoading || isPending}
+                    disabled={actionLoading}
                     className="px-3 py-1.5 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
                     style={{ backgroundColor: "#1565C0" }}
                   >
@@ -1269,7 +1279,7 @@ export default function ProducaoClient({
               )}
               <button
                 onClick={() => executarMoverEnvase(true)}
-                disabled={actionLoading || isPending}
+                disabled={actionLoading}
                 className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
                 style={{ backgroundColor: "#C62828" }}
               >
@@ -1347,8 +1357,8 @@ export default function ProducaoClient({
             <ModalActions
               onCancel={closeModal}
               onSave={handleAddInsumo}
-              saveLabel={isPending || modalSaving ? "Salvando..." : "SALVAR"}
-              disabled={isPending || modalSaving || insumosLoading}
+              saveLabel={modalSaving ? "Salvando..." : "SALVAR"}
+              disabled={modalSaving || insumosLoading}
             />
           </div>
         </Modal>
@@ -1397,8 +1407,8 @@ export default function ProducaoClient({
             <ModalActions
               onCancel={closeModal}
               onSave={handleEditInsumo}
-              saveLabel={isPending ? "Salvando..." : "SALVAR"}
-              disabled={isPending}
+              saveLabel={modalSaving ? "Salvando..." : "SALVAR"}
+              disabled={modalSaving}
             />
           </div>
         </Modal>
@@ -1418,9 +1428,9 @@ export default function ProducaoClient({
             <ModalActions
               onCancel={closeModal}
               onSave={handleExcluirInsumo}
-              saveLabel={isPending ? "Removendo..." : "REMOVER"}
+              saveLabel={modalSaving ? "Removendo..." : "REMOVER"}
               saveColor="#C62828"
-              disabled={isPending}
+              disabled={modalSaving}
             />
           </div>
         </Modal>
@@ -1442,9 +1452,9 @@ export default function ProducaoClient({
             <ModalActions
               onCancel={closeModal}
               onSave={handleExcluirLote}
-              saveLabel={isPending ? "Excluindo..." : "EXCLUIR"}
+              saveLabel={modalSaving ? "Excluindo..." : "EXCLUIR"}
               saveColor="#C62828"
-              disabled={isPending}
+              disabled={modalSaving}
             />
           </div>
         </Modal>

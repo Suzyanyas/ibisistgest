@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, useTransition } from "react";
-import Link from "next/link";
+import { erroTela } from "@/lib/erro-tela";
+import { useState, useEffect, useCallback, useRef, useTransition } from "react";
+import { usePendencias } from "@/components/PendenciasProvider";
+import { PENDENCIA_TEXTOS } from "@/lib/pendencias";
 import { useRouter } from "next/navigation";
 import { Calendar, Package, CheckCircle } from "lucide-react";
 import {
@@ -22,7 +24,6 @@ import {
   type ProdutoAbaixo,
   type AtividadeItem,
   type Pendencias,
-  type PendenciaTipo,
 } from "@/app/actions/dashboard";
 import type { FormulaRow } from "@/app/actions/formulas";
 
@@ -68,37 +69,6 @@ function activityDotColor(action: string): string {
   if (action.includes("Retirada de produto")) return "#E53935";
   return "#9CA3AF";
 }
-
-const PENDENCIA_TEXTOS: Record<PendenciaTipo, { titulo: string; explicacao: string }> = {
-  densidade_a_confirmar: {
-    titulo: "Densidade por confirmar",
-    explicacao: "A densidade foi estimada e ainda ninguém a confirmou.",
-  },
-  estoque_estimado: {
-    titulo: "Valor estimado",
-    explicacao: "O estoque é um valor estimado, precisa de contagem.",
-  },
-  faltas_registadas: {
-    titulo: "Falta registada",
-    explicacao: "Faltou material numa produção e o estoque ainda não foi acertado.",
-  },
-  unidade_incompativel: {
-    titulo: "Unidade que não bate",
-    explicacao: "A fórmula usa uma unidade que não combina com a do estoque.",
-  },
-  produto_sem_formula: {
-    titulo: "Produto sem fórmula",
-    explicacao: "Este produto não está ligado a nenhuma fórmula.",
-  },
-  categoria_em_falta: {
-    titulo: "Embalagem sem categoria",
-    explicacao: "Parece uma embalagem, mas falta indicar o tipo no estoque.",
-  },
-  tamanho_sem_garrafa: {
-    titulo: "Embalagem não cadastrada",
-    explicacao: "Falta cadastrar a garrafa ou a tampa deste tamanho no estoque.",
-  },
-};
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
 
@@ -268,8 +238,22 @@ export default function DashboardClient({
     useState<ProdutoAbaixo[]>(initialProdutosAbaixo);
   const [atividadeRecente, setAtividadeRecente] =
     useState<AtividadeItem[]>(initialAtividadeRecente);
-  const [pendencias, setPendencias] = useState<Pendencias>(initialPendencias);
-  const [showAllPendencias, setShowAllPendencias] = useState(false);
+  const pendCtx = usePendencias();
+  // Dados do provider (compartilhados com o modal); antes de ele ser alimentado, os da página
+  const pendencias = pendCtx?.pendencias ?? initialPendencias;
+  const pendCtxRef = useRef(pendCtx);
+  useEffect(() => {
+    pendCtxRef.current = pendCtx;
+  });
+  const pendenciasEntregues = useRef(false);
+
+  // A cada carregamento do Dashboard o modal de pendências é (re)aberto pelo provider,
+  // reaproveitando os dados já consultados nesta página
+  useEffect(() => {
+    if (pendenciasEntregues.current) return;
+    pendenciasEntregues.current = true;
+    pendCtxRef.current?.carregarDashboard(initialPendencias);
+  }, [initialPendencias]);
   const [showAllEstoque, setShowAllEstoque] = useState(false);
 
   // Modal state
@@ -279,6 +263,7 @@ export default function DashboardClient({
   );
   const [selData, setSelData] = useState(todayStr());
   const [modalError, setModalError] = useState<string | null>(null);
+  const [agendaErro, setAgendaErro] = useState<string | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
 
   // Per-item toggle loading set
@@ -310,11 +295,15 @@ export default function DashboardClient({
     setInsumosAbaixo(ia);
     setProdutosAbaixo(pa);
     if (at) setAtividadeRecente(at);
-    if (pe) setPendencias(pe);
+    if (pe) pendCtxRef.current?.definir(pe);
   }, [isAdmin]);
 
   useEffect(() => {
-    const id = setInterval(refresh, 60_000);
+    const id = setInterval(() => {
+      refresh().catch(() => {
+        // falha de rede momentânea: tenta de novo no próximo ciclo
+      });
+    }, 60_000);
     return () => clearInterval(id);
   }, [refresh]);
 
@@ -322,8 +311,13 @@ export default function DashboardClient({
 
   async function handleToggle(item: AgendaItemWithFormula) {
     setToggling((s) => new Set(s).add(item.id));
+    setAgendaErro(null);
     try {
-      await toggleAgendaItem(item.id, !item.concluido);
+      const r = await toggleAgendaItem(item.id, !item.concluido);
+      if (!r.ok) {
+        setAgendaErro(r.error);
+        return;
+      }
       setAgendaHoje((prev) =>
         prev.map((i) =>
           i.id === item.id ? { ...i, concluido: !i.concluido } : i
@@ -334,8 +328,8 @@ export default function DashboardClient({
           i.id === item.id ? { ...i, concluido: !i.concluido } : i
         )
       );
-    } catch {
-      // silently ignore — stale state will self-correct on next refresh
+    } catch (e) {
+      setAgendaErro(erroTela(e, "Erro ao atualizar a agenda."));
     } finally {
       setToggling((s) => {
         const next = new Set(s);
@@ -347,12 +341,17 @@ export default function DashboardClient({
 
   async function handleDelete(id: string) {
     setToggling((s) => new Set(s).add(id));
+    setAgendaErro(null);
     try {
-      await deleteAgendaItem(id);
+      const r = await deleteAgendaItem(id);
+      if (!r.ok) {
+        setAgendaErro(r.error);
+        return;
+      }
       setAgendaHoje((prev) => prev.filter((i) => i.id !== id));
       setAgendaAtrasada((prev) => prev.filter((i) => i.id !== id));
-    } catch {
-      // silently ignore
+    } catch (e) {
+      setAgendaErro(erroTela(e, "Erro ao excluir da agenda."));
     } finally {
       setToggling((s) => {
         const next = new Set(s);
@@ -365,9 +364,16 @@ export default function DashboardClient({
   function handleReagendar(id: string) {
     setReagendandoId(id);
     startReagendar(async () => {
+      setAgendaErro(null);
       try {
-        await reagendarAgendaItem(id);
+        const r = await reagendarAgendaItem(id);
+        if (!r.ok) {
+          setAgendaErro(r.error);
+          return;
+        }
         await refresh();
+      } catch (e) {
+        setAgendaErro(erroTela(e, "Erro ao reagendar."));
       } finally {
         setReagendandoId(null);
       }
@@ -387,11 +393,12 @@ export default function DashboardClient({
     setModalError(null);
     setModalLoading(true);
     try {
-      await addAgendaItem(selFormulaId, selData);
+      const r = await addAgendaItem(selFormulaId, selData);
+      if (!r.ok) return setModalError(r.error);
       setShowModal(false);
       await refresh();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao adicionar.");
+      setModalError(erroTela(e, "Erro ao adicionar."));
     } finally {
       setModalLoading(false);
     }
@@ -411,6 +418,9 @@ export default function DashboardClient({
 
   return (
     <div className="px-6 py-6">
+      {agendaErro && (
+        <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mb-4">{agendaErro}</p>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
 
         {/* ── Card 1: Agenda ── */}
@@ -910,55 +920,27 @@ export default function DashboardClient({
               </p>
               <KpiBadge count={totalPendencias} variant="amber" />
             </div>
-            <div
-              className={`flex-1 px-4 pb-4 flex flex-col ${
-                showAllPendencias ? "overflow-y-auto max-h-96" : ""
-              }`}
-            >
-              {(showAllPendencias ? pendencias.grupos : pendencias.grupos.slice(0, 2)).map((g) => (
-                <div key={g.tipo} className="mb-2">
-                  <p className="font-semibold text-gray-800" style={{ fontSize: 13 }}>
+            <div className="flex-1 px-5 pb-5 flex flex-col gap-3">
+              <p className="text-gray-700" style={{ fontSize: 14 }}>
+                {totalPendencias === 1
+                  ? "1 item precisa da sua atenção."
+                  : `${totalPendencias} itens precisam da sua atenção.`}
+              </p>
+              <ul className="text-gray-600" style={{ fontSize: 13 }}>
+                {pendencias.grupos.map((g) => (
+                  <li key={g.tipo}>
                     {PENDENCIA_TEXTOS[g.tipo].titulo} ({g.items.length})
-                  </p>
-                  <p className="text-gray-600" style={{ fontSize: 12 }}>
-                    {PENDENCIA_TEXTOS[g.tipo].explicacao}
-                  </p>
-                  <ul>
-                    {(showAllPendencias ? g.items : g.items.slice(0, 3)).map((it) => (
-                      <li key={it.id} className="border-b border-gray-200 last:border-0">
-                        <Link
-                          href={it.href}
-                          className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 -mx-2 transition-colors hover:bg-amber-100 focus-visible:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
-                        >
-                          <span className="min-w-0">
-                            <span className="block text-gray-800 truncate" style={{ fontSize: 14 }}>
-                              {it.nome}
-                            </span>
-                            <span className="block text-gray-500" style={{ fontSize: 12 }}>
-                              {it.detalhe}
-                            </span>
-                          </span>
-                          <span
-                            className="flex-shrink-0 font-semibold text-amber-800 underline"
-                            style={{ fontSize: 12 }}
-                          >
-                            {it.acao}
-                          </span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-              {(pendencias.grupos.length > 2 || pendencias.grupos.some((g) => g.items.length > 3)) && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllPendencias((v) => !v)}
-                  className="text-xs font-semibold text-amber-700 underline cursor-pointer mt-2 self-start"
-                >
-                  {showAllPendencias ? "Ver menos" : `Ver todas (${totalPendencias})`}
-                </button>
-              )}
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={() => pendCtx?.abrir()}
+                className="self-start rounded-lg text-white font-bold hover:brightness-110 transition focus:outline-none focus-visible:ring-4 focus-visible:ring-amber-300"
+                style={{ minHeight: 44, padding: "0 20px", backgroundColor: "#D97706", border: "none", cursor: "pointer", fontSize: 14 }}
+              >
+                Ver pendências
+              </button>
             </div>
           </Card>
         </div>

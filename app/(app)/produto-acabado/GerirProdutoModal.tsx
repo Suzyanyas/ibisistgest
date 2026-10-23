@@ -11,6 +11,7 @@ import {
   type ProdutoGestaoInfo,
   type ModoMesclagem,
 } from "@/app/actions/produto-acabado";
+import { erroTela } from "@/lib/erro-tela";
 import { getFormulasList, type FormulaBasic } from "@/app/actions/producao";
 import {
   Modal,
@@ -112,7 +113,7 @@ export default function GerirProdutoModal({
         setSeg(String(p.estoque_seguranca));
         setFormulaId(p.formula?.id ?? "");
       } catch (e) {
-        if (!cancelado) setErro(e instanceof Error ? e.message : "Erro ao carregar o produto.");
+        if (!cancelado) setErro(erroTela(e, "Erro ao carregar o produto."));
       } finally {
         if (!cancelado) setCarregando(false);
       }
@@ -143,7 +144,7 @@ export default function GerirProdutoModal({
       }
       await onDone();
     } catch (e) {
-      setErro(e instanceof Error ? e.message : falha);
+      setErro(erroTela(e, falha));
       setConfirmandoMesclar(false);
     } finally {
       setOcupado(false);
@@ -180,7 +181,7 @@ export default function GerirProdutoModal({
         return next;
       });
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao carregar o produto.");
+      setErro(erroTela(e, "Erro ao carregar o produto."));
     } finally {
       setCarregandoInfo(false);
     }

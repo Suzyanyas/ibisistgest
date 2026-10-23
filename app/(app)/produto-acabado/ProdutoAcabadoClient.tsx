@@ -1,5 +1,6 @@
 "use client";
 
+import { erroTela } from "@/lib/erro-tela";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { History, Search } from "lucide-react";
@@ -318,7 +319,7 @@ export default function ProdutoAcabadoClient({
       setRelatorioRows(await getRetiradasPorData(data));
     } catch (e) {
       setRelatorioRows([]);
-      setModalError(e instanceof Error ? e.message : "Erro ao carregar retiradas.");
+      setModalError(erroTela(e, "Erro ao carregar retiradas."));
     } finally {
       setRelatorioLoading(false);
     }
@@ -342,7 +343,7 @@ export default function ProdutoAcabadoClient({
       const data = await getHistoricoProduto(produto.id);
       setHistoricoProduto(data);
     } catch (e) {
-      setHistoricoError(e instanceof Error ? e.message : "Erro ao carregar histórico.");
+      setHistoricoError(erroTela(e, "Erro ao carregar histórico."));
     } finally {
       setHistoricoLoading(false);
     }
@@ -391,7 +392,7 @@ export default function ProdutoAcabadoClient({
       closeModal();
       await refreshData();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao criar produto.");
+      setModalError(erroTela(e, "Erro ao criar produto."));
     } finally {
       setSaveLoading(false);
     }
@@ -424,7 +425,7 @@ export default function ProdutoAcabadoClient({
       await refreshData();
     } catch (e) {
       setModalError(
-        e instanceof Error ? e.message : "Erro ao registrar retirada."
+        erroTela(e, "Erro ao registrar retirada.")
       );
     } finally {
       setRetiradaLoading(false);
@@ -455,7 +456,7 @@ export default function ProdutoAcabadoClient({
       closeModal();
       await refreshData();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : "Erro ao ajustar estoque.");
+      setModalError(erroTela(e, "Erro ao ajustar estoque."));
     } finally {
       setInvLoading(false);
     }
@@ -521,7 +522,7 @@ export default function ProdutoAcabadoClient({
       doc.save(`relatorio-transferencia-${relatorioData}.pdf`);
     } catch (e) {
       setModalError(
-        e instanceof Error ? e.message : "Erro ao gerar PDF."
+        erroTela(e, "Erro ao gerar PDF.")
       );
     } finally {
       setPdfLoading(false);

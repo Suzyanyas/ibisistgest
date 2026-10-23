@@ -5,6 +5,14 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser, getUserRole, requireAdmin } from "@/app/actions/auth-role";
 import { getCustosMap } from "@/lib/custos";
 import { logAtividade } from "@/app/actions/dashboard";
+import { calcularCustoLinha } from "@/lib/unidades";
+import {
+  ErroAcao,
+  erroBanco,
+  executar,
+  type ResultadoAcao,
+  type ResultadoDado,
+} from "@/lib/acao";
 import type { Tables } from "@/types/supabase";
 
 export type FormulaRow = Tables<"formulas">;
@@ -15,7 +23,13 @@ export type InsumoBasic = Pick<
 >;
 
 export type FormulaInsumoRow = Tables<"formula_insumos"> & {
-  insumos: { nome: string; unidade: string; custo_unitario: number | null; custo_unidade: string | null } | null;
+  insumos: {
+    nome: string;
+    unidade: string;
+    densidade: number | null;
+    custo_unitario: number | null;
+    custo_unidade: string | null;
+  } | null;
 };
 
 export type FormulaWithInsumos = FormulaRow & {
@@ -32,21 +46,26 @@ export async function getFormulas(): Promise<FormulaRow[]> {
   return data ?? [];
 }
 
+// Leitura (lança em falha inesperada): o cliente mostra uma mensagem genérica.
 export async function getFormulaWithInsumos(
   id: string
 ): Promise<FormulaWithInsumos> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("formulas")
-    .select("*, formula_insumos(*, insumos(nome, unidade))")
-    .eq("id", id)
-    .single();
+  // Papel e consulta da fórmula são independentes: rodam juntos
+  const [{ data, error }, role] = await Promise.all([
+    supabase
+      .from("formulas")
+      .select("*, formula_insumos(*, insumos(nome, unidade, densidade))")
+      .eq("id", id)
+      .single(),
+    getUserRole(),
+  ]);
   if (error) throw new Error(error.message);
 
   // Custos: só para admin, vindos de insumo_custos; demais recebem null
-  const custos = (await getUserRole()) === "admin" ? await getCustosMap(supabase) : null;
+  const custos = role === "admin" ? await getCustosMap(supabase) : null;
   const formula_insumos = (data.formula_insumos ?? []).map((fi: Tables<"formula_insumos"> & { insumos: unknown }) => {
-    const insumo = fi.insumos as { nome: string; unidade: string } | null;
+    const insumo = fi.insumos as { nome: string; unidade: string; densidade: number | null } | null;
     return {
       ...fi,
       insumos: insumo
@@ -67,17 +86,19 @@ export async function createFormula(payload: {
   rendimento: number;
   rendimento_unidade: string;
   obs?: string | null;
-}): Promise<FormulaRow> {
-  const supabase = await createClient();
-  const user = await getCurrentUser();
-  const { data, error } = await supabase
-    .from("formulas")
-    .insert(payload)
-    .select()
-    .single();
-  if (error) throw new Error(error.message);
-  await logAtividade("Nova fórmula", payload.nome, user?.id, user?.email);
-  return data;
+}): Promise<ResultadoDado<FormulaRow>> {
+  return executar("createFormula", async () => {
+    const supabase = await createClient();
+    const user = await getCurrentUser();
+    const { data, error } = await supabase
+      .from("formulas")
+      .insert(payload)
+      .select()
+      .single();
+    if (error) erroBanco("createFormula", error);
+    await logAtividade("Nova fórmula", payload.nome, user?.id, user?.email);
+    return data!;
+  });
 }
 
 export async function updateFormula(
@@ -89,47 +110,57 @@ export async function updateFormula(
     rendimento_unidade?: string;
     obs?: string | null;
   }
-): Promise<void> {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("formulas")
-    .update(payload)
-    .eq("id", id);
-  if (error) throw new Error(error.message);
+): Promise<ResultadoAcao> {
+  return executar("updateFormula", async () => {
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("formulas")
+      .update(payload)
+      .eq("id", id);
+    if (error) erroBanco("updateFormula", error);
+  });
 }
 
-export async function deleteFormula(id: string): Promise<void> {
-  const supabase = await createClient();
-  const user = await getCurrentUser();
+export async function deleteFormula(id: string): Promise<ResultadoAcao> {
+  return executar("deleteFormula", async () => {
+    const supabase = await createClient();
+    const user = await getCurrentUser();
 
-  const { count: loteCount, error: loteError } = await supabase
-    .from("lotes_producao")
-    .select("id", { count: "exact", head: true })
-    .eq("formula_id", id);
-  if (loteError) throw new Error(loteError.message);
+    // Consultas independentes entre si
+    const [loteRes, formulaRes] = await Promise.all([
+      supabase
+        .from("lotes_producao")
+        .select("id", { count: "exact", head: true })
+        .eq("formula_id", id),
+      supabase.from("formulas").select("nome").eq("id", id).maybeSingle(),
+    ]);
+    if (loteRes.error) erroBanco("deleteFormula.lotes", loteRes.error);
 
-  if ((loteCount ?? 0) > 0) {
-    throw new Error(
-      "Esta fórmula está a ser usada em lotes de produção e não pode ser excluída."
-    );
-  }
+    if ((loteRes.count ?? 0) > 0) {
+      throw new ErroAcao("Esta fórmula já foi usada em lotes e não pode ser excluída.");
+    }
 
-  const { data: formula } = await supabase
-    .from("formulas")
-    .select("nome")
-    .eq("id", id)
-    .single();
-  await logAtividade("Exclusão de fórmula", formula?.nome ?? "—", user?.id, user?.email);
+    // Apaga os itens primeiro, caso não haja CASCADE
+    const { error: childError } = await supabase
+      .from("formula_insumos")
+      .delete()
+      .eq("formula_id", id);
+    if (childError) erroBanco("deleteFormula.itens", childError);
 
-  // Delete children first in case there's no CASCADE
-  const { error: childError } = await supabase
-    .from("formula_insumos")
-    .delete()
-    .eq("formula_id", id);
-  if (childError) throw new Error(childError.message);
-  const { error } = await supabase.from("formulas").delete().eq("id", id);
-  if (error) throw new Error(error.message);
-  revalidatePath("/");
+    const { error } = await supabase.from("formulas").delete().eq("id", id);
+    if (error) {
+      if (error.code === "23503") {
+        console.error("[db:deleteFormula]", error);
+        throw new ErroAcao(
+          "Esta fórmula está em uso (lotes ou produtos) e não pode ser excluída."
+        );
+      }
+      erroBanco("deleteFormula", error);
+    }
+
+    await logAtividade("Exclusão de fórmula", formulaRes.data?.nome ?? "—", user?.id, user?.email);
+    revalidatePath("/");
+  });
 }
 
 export async function addInsumoToFormula(
@@ -137,37 +168,43 @@ export async function addInsumoToFormula(
   insumo_id: string,
   quantidade: number,
   unidade: string
-): Promise<void> {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("formula_insumos")
-    .insert({ formula_id, insumo_id, quantidade, unidade });
-  if (error) throw new Error(error.message);
-  revalidatePath("/");
+): Promise<ResultadoAcao> {
+  return executar("addInsumoToFormula", async () => {
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("formula_insumos")
+      .insert({ formula_id, insumo_id, quantidade, unidade });
+    if (error) erroBanco("addInsumoToFormula", error);
+    revalidatePath("/");
+  });
 }
 
 export async function updateFormulaInsumo(
   id: string,
   quantidade: number,
   unidade: string
-): Promise<void> {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("formula_insumos")
-    .update({ quantidade, unidade })
-    .eq("id", id);
-  if (error) throw new Error(error.message);
-  revalidatePath("/");
+): Promise<ResultadoAcao> {
+  return executar("updateFormulaInsumo", async () => {
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("formula_insumos")
+      .update({ quantidade, unidade })
+      .eq("id", id);
+    if (error) erroBanco("updateFormulaInsumo", error);
+    revalidatePath("/");
+  });
 }
 
-export async function removeInsumoFromFormula(id: string): Promise<void> {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("formula_insumos")
-    .delete()
-    .eq("id", id);
-  if (error) throw new Error(error.message);
-  revalidatePath("/");
+export async function removeInsumoFromFormula(id: string): Promise<ResultadoAcao> {
+  return executar("removeInsumoFromFormula", async () => {
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("formula_insumos")
+      .delete()
+      .eq("id", id);
+    if (error) erroBanco("removeInsumoFromFormula", error);
+    revalidatePath("/");
+  });
 }
 
 export type FormulaCustoBreakdown = {
@@ -177,6 +214,8 @@ export type FormulaCustoBreakdown = {
   unidade: string;
   custo_unitario: number;
   custo_total: number;
+  // null quando o custo foi calculado; senão o motivo (ex.: "densidade necessária")
+  aviso: string | null;
 };
 
 export type FormulaCusto = {
@@ -188,23 +227,33 @@ export type FormulaCusto = {
 export async function getFormulaCusto(formula_id: string): Promise<FormulaCusto | null> {
   if ((await getUserRole()) !== "admin") return null;
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("formula_insumos")
-    .select("id, insumo_id, quantidade, unidade, insumos(nome)")
-    .eq("formula_id", formula_id);
+  const [{ data, error }, custos] = await Promise.all([
+    supabase
+      .from("formula_insumos")
+      .select("id, insumo_id, quantidade, unidade, insumos(nome, densidade)")
+      .eq("formula_id", formula_id),
+    getCustosMap(supabase),
+  ]);
   if (error) throw new Error(error.message);
-  const custos = await getCustosMap(supabase);
 
   const breakdown: FormulaCustoBreakdown[] = (data ?? []).map((row) => {
-    const custo_unitario = custos.get(row.insumo_id)?.custo_unitario ?? 0;
-    const custo_total = row.quantidade * custo_unitario;
+    const insumo = row.insumos as unknown as { nome: string; densidade: number | null } | null;
+    const custo = custos.get(row.insumo_id);
+    const linha = calcularCustoLinha(
+      row.quantidade,
+      row.unidade,
+      custo?.custo_unitario,
+      custo?.custo_unidade,
+      insumo?.densidade
+    );
     return {
       formula_insumo_id: row.id,
-      insumo_nome: (row.insumos as unknown as { nome: string } | null)?.nome ?? "—",
+      insumo_nome: insumo?.nome ?? "—",
       quantidade: row.quantidade,
       unidade: row.unidade,
-      custo_unitario,
-      custo_total,
+      custo_unitario: custo?.custo_unitario ?? 0,
+      custo_total: linha.custo,
+      aviso: linha.aviso,
     };
   });
 
@@ -219,44 +268,53 @@ export async function duplicarFormula(
   novo_nome: string,
   nova_sigla: string,
   insumoOverrides?: Array<{ insumo_id: string; quantidade: number; unidade: string }>
-): Promise<FormulaWithInsumos> {
-  await requireAdmin();
-  const supabase = await createClient();
-  const user = await getCurrentUser();
+): Promise<ResultadoDado<FormulaWithInsumos>> {
+  return executar("duplicarFormula", async () => {
+    await requireAdmin();
+    const supabase = await createClient();
+    const user = await getCurrentUser();
 
-  const original = await getFormulaWithInsumos(formula_id);
+    // Os itens só precisam ser lidos quando não vêm da tela
+    const original = insumoOverrides ? null : await getFormulaWithInsumos(formula_id);
+    const { data: base, error: baseError } = await supabase
+      .from("formulas")
+      .select("rendimento, rendimento_unidade, obs")
+      .eq("id", formula_id)
+      .single();
+    if (baseError) erroBanco("duplicarFormula.base", baseError);
 
-  const { data: novaFormula, error } = await supabase
-    .from("formulas")
-    .insert({
-      nome: novo_nome,
-      sigla: nova_sigla,
-      rendimento: original.rendimento,
-      rendimento_unidade: original.rendimento_unidade,
-      obs: original.obs,
-    })
-    .select()
-    .single();
-  if (error) throw new Error(error.message);
+    const { data: novaFormula, error } = await supabase
+      .from("formulas")
+      .insert({
+        nome: novo_nome,
+        sigla: nova_sigla,
+        rendimento: base!.rendimento,
+        rendimento_unidade: base!.rendimento_unidade,
+        obs: base!.obs,
+      })
+      .select()
+      .single();
+    if (error) erroBanco("duplicarFormula", error);
 
-  const insumosFonte = insumoOverrides ?? original.formula_insumos;
+    const insumosFonte = insumoOverrides ?? original!.formula_insumos;
 
-  if (insumosFonte.length > 0) {
-    const inserts = insumosFonte.map((fi) => ({
-      formula_id: novaFormula.id,
-      insumo_id: fi.insumo_id,
-      quantidade: fi.quantidade,
-      unidade: fi.unidade,
-    }));
-    const { error: insError } = await supabase
-      .from("formula_insumos")
-      .insert(inserts);
-    if (insError) throw new Error(insError.message);
-  }
+    if (insumosFonte.length > 0) {
+      const inserts = insumosFonte.map((fi) => ({
+        formula_id: novaFormula!.id,
+        insumo_id: fi.insumo_id,
+        quantidade: fi.quantidade,
+        unidade: fi.unidade,
+      }));
+      const { error: insError } = await supabase
+        .from("formula_insumos")
+        .insert(inserts);
+      if (insError) erroBanco("duplicarFormula.itens", insError);
+    }
 
-  await logAtividade("Fórmula duplicada", novo_nome, user?.id, user?.email);
+    await logAtividade("Fórmula duplicada", novo_nome, user?.id, user?.email);
 
-  return getFormulaWithInsumos(novaFormula.id);
+    return getFormulaWithInsumos(novaFormula!.id);
+  });
 }
 
 export async function getInsumosList(): Promise<InsumoBasic[]> {

@@ -14,8 +14,9 @@
 
 import { createClient } from "@/lib/supabase/server";
 import type { Tables } from "@/types/supabase";
-import { getUserRole } from "@/app/actions/auth-role";
+import { getCurrentUser, getUserRole, requireAdmin } from "@/app/actions/auth-role";
 import { getUnidadesCompativeis } from "@/lib/unidades";
+import { ErroAcao, erroBanco, executar, type ResultadoAcao, type ResultadoDado } from "@/lib/acao";
 
 export type AgendaItemWithFormula = Tables<"agenda_producao"> & {
   formulas: Pick<Tables<"formulas">, "nome" | "sigla"> | null;
@@ -64,48 +65,56 @@ export async function getAgendaAtrasada(): Promise<AgendaItemWithFormula[]> {
 export async function toggleAgendaItem(
   id: string,
   concluido: boolean
-): Promise<void> {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("agenda_producao")
-    .update({ concluido })
-    .eq("id", id);
-  if (error) throw new Error(error.message);
+): Promise<ResultadoAcao> {
+  return executar("toggleAgendaItem", async () => {
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("agenda_producao")
+      .update({ concluido })
+      .eq("id", id);
+    if (error) erroBanco("toggleAgendaItem", error);
+  });
 }
 
 export async function addAgendaItem(
   formula_id: string,
   data_agenda: string
-): Promise<void> {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("agenda_producao")
-    .insert({ formula_id, data_agenda, concluido: false });
-  if (error) throw new Error(error.message);
+): Promise<ResultadoAcao> {
+  return executar("addAgendaItem", async () => {
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("agenda_producao")
+      .insert({ formula_id, data_agenda, concluido: false });
+    if (error) erroBanco("addAgendaItem", error);
+  });
 }
 
-export async function deleteAgendaItem(id: string): Promise<void> {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("agenda_producao")
-    .delete()
-    .eq("id", id);
-  if (error) throw new Error(error.message);
+export async function deleteAgendaItem(id: string): Promise<ResultadoAcao> {
+  return executar("deleteAgendaItem", async () => {
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("agenda_producao")
+      .delete()
+      .eq("id", id);
+    if (error) erroBanco("deleteAgendaItem", error);
+  });
 }
 
 export async function reagendarAgendaItem(
   id: string
-): Promise<Tables<"agenda_producao">> {
-  const supabase = await createClient();
-  const today = new Date().toISOString().slice(0, 10);
-  const { data, error } = await supabase
-    .from("agenda_producao")
-    .update({ data_agenda: today })
-    .eq("id", id)
-    .select()
-    .single();
-  if (error) throw new Error(error.message);
-  return data;
+): Promise<ResultadoDado<Tables<"agenda_producao">>> {
+  return executar("reagendarAgendaItem", async () => {
+    const supabase = await createClient();
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabase
+      .from("agenda_producao")
+      .update({ data_agenda: today })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) erroBanco("reagendarAgendaItem", error);
+    return data!;
+  });
 }
 
 export async function getLotesEmEnvase(): Promise<LoteEnvaseItem[]> {
@@ -280,7 +289,19 @@ export async function getAtividadeRecente(): Promise<AtividadeItem[]> {
     (m) => !chaveLog.has(`${m.created_at.slice(0, 19)}|${m.user_email ?? ""}`)
   );
 
-  return [...lotesAtividade, ...movSemDuplicados, ...retiradasAtividade, ...logAtividades]
+  // A função registrar_retirada grava a retirada em produto_retiradas E em log_atividades
+  // ("Retirada de produto", no mesmo instante e com o mesmo usuário). Fica a entrada do log
+  // (mesma informação); retiradas sem log correspondente (anteriores ao log) continuam aparecendo.
+  const chaveLogRetirada = new Set(
+    logAtividades
+      .filter((l) => l.action === "Retirada de produto")
+      .map((l) => `${l.created_at.slice(0, 19)}|${l.user_email ?? ""}`)
+  );
+  const retiradasSemDuplicados = retiradasAtividade.filter(
+    (r) => !chaveLogRetirada.has(`${r.created_at.slice(0, 19)}|${r.user_email ?? ""}`)
+  );
+
+  return [...lotesAtividade, ...movSemDuplicados, ...retiradasSemDuplicados, ...logAtividades]
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, 20);
 }
@@ -301,6 +322,10 @@ export type PendenciaItem = {
   acao: string;
   // Link para o módulo, já com focus e acao
   href: string;
+  // Chave estável do item (tipo:id), usada para ignorar a pendência
+  chave: string;
+  // Pendência que depende de decisão e pode estar certa; só estas podem ser ignoradas
+  ignoravel: boolean;
 };
 
 export type PendenciaTipo =
@@ -317,7 +342,17 @@ export type PendenciaGrupo = {
   items: PendenciaItem[];
 };
 
-export type Pendencias = { grupos: PendenciaGrupo[] };
+// podeIgnorar: false enquanto a tabela pendencias_ignoradas não existir (migração 0005)
+export type Pendencias = { grupos: PendenciaGrupo[]; podeIgnorar: boolean };
+
+// Tipos que são decisões do administrador e não necessariamente erros
+const TIPOS_IGNORAVEIS: PendenciaTipo[] = [
+  "densidade_a_confirmar",
+  "estoque_estimado",
+  "produto_sem_formula",
+  "categoria_em_falta",
+  "tamanho_sem_garrafa",
+];
 
 function normalizar(texto: string): string {
   return texto.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -343,11 +378,11 @@ const TAMANHOS_GARRAFA:{ label: string; categoria: string }[] = [
 ];
 
 export async function getPendencias(): Promise<Pendencias> {
-  if ((await getUserRole()) !== "admin") return { grupos: [] };
+  if ((await getUserRole()) !== "admin") return { grupos: [], podeIgnorar: false };
 
   const supabase = await createClient();
 
-  const [insRes, movRes, fiRes, paRes] = await Promise.all([
+  const [insRes, movRes, fiRes, paRes, igRes] = await Promise.all([
     supabase
       .from("insumos")
       .select("id, nome, unidade, categoria, densidade, densidade_confirmada, estoque_estimado")
@@ -366,6 +401,7 @@ export async function getPendencias(): Promise<Pendencias> {
       .is("formula_id", null)
       .eq("ativo", true)
       .order("nome"),
+    supabase.from("pendencias_ignoradas").select("chave"),
   ]);
 
   if (insRes.error) throw new Error(insRes.error.message);
@@ -374,9 +410,22 @@ export async function getPendencias(): Promise<Pendencias> {
   if (paRes.error) throw new Error(paRes.error.message);
 
   const insumos = insRes.data ?? [];
+  // Sem a tabela (ainda não migrada), nada é ignorado e o botão de ignorar não aparece
+  const podeIgnorar = !igRes.error;
+  const ignoradas = new Set((igRes.data ?? []).map((r) => r.chave));
   const grupos: PendenciaGrupo[] = [];
-  const add = (tipo: PendenciaTipo, items: PendenciaItem[]) => {
-    if (items.length > 0) grupos.push({ tipo, items });
+  const add = (
+    tipo: PendenciaTipo,
+    items: Omit<PendenciaItem, "chave" | "ignoravel">[]
+  ) => {
+    const completos = items
+      .map((it) => ({
+        ...it,
+        chave: `${tipo}:${it.id}`,
+        ignoravel: podeIgnorar && TIPOS_IGNORAVEIS.includes(tipo),
+      }))
+      .filter((it) => !ignoradas.has(it.chave));
+    if (completos.length > 0) grupos.push({ tipo, items: completos });
   };
 
   // a. densidade a confirmar
@@ -521,7 +570,7 @@ export async function getPendencias(): Promise<Pendencias> {
 
   // g. tamanhos sem garrafa / sem tampa
   const categorias = new Set(insumos.map((i) => i.categoria).filter(Boolean));
-  const semEmbalagem: PendenciaItem[] = TAMANHOS_GARRAFA.filter(
+  const semEmbalagem: Omit<PendenciaItem, "chave" | "ignoravel">[] = TAMANHOS_GARRAFA.filter(
     (t) => !categorias.has(t.categoria)
   ).map((t) => ({
     id: `garrafa-${t.categoria}`,
@@ -545,5 +594,33 @@ export async function getPendencias(): Promise<Pendencias> {
   }
   add("tamanho_sem_garrafa", semEmbalagem);
 
-  return { grupos };
+  return { grupos, podeIgnorar };
+}
+
+// Marca uma pendência como "está certa, não precisa corrigir". Permanente para aquele item.
+export async function ignorarPendencia(
+  chave: string,
+  tipo: PendenciaTipo,
+  nome: string
+): Promise<ResultadoAcao> {
+  return executar("ignorarPendencia", async () => {
+    await requireAdmin();
+    if (!chave || !chave.startsWith(`${tipo}:`) || !TIPOS_IGNORAVEIS.includes(tipo)) {
+      throw new ErroAcao("Esta pendência não pode ser ignorada.");
+    }
+    const supabase = await createClient();
+    const user = await getCurrentUser();
+    const { error } = await supabase
+      .from("pendencias_ignoradas")
+      .upsert({ chave, tipo, ignorada_por: user?.id ?? null }, { onConflict: "chave" });
+    if (error) {
+      // 42P01 / PGRST205: tabela inexistente (migração 0005 ainda não aplicada)
+      if (error.code === "42P01" || error.code === "PGRST205") {
+        console.error("[db:ignorarPendencia]", error);
+        throw new ErroAcao("Ignorar pendências ainda não está disponível.");
+      }
+      erroBanco("ignorarPendencia", error);
+    }
+    await logAtividade("Pendência ignorada", nome, user?.id, user?.email);
+  });
 }

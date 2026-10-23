@@ -1,5 +1,6 @@
 "use client";
 
+import { erroTela } from "@/lib/erro-tela";
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -188,7 +189,7 @@ export default function EnvaseClient({
           }
         }
       } catch (e) {
-        setErrorMsg(e instanceof Error ? e.message : "Erro ao carregar envase.");
+        setErrorMsg(erroTela(e, "Erro ao carregar envase."));
       } finally {
         setFormLoading(false);
       }
@@ -239,7 +240,7 @@ export default function EnvaseClient({
         setErrorMsg(r.error);
       }
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Erro ao salvar.");
+      setErrorMsg(erroTela(e, "Erro ao salvar."));
     } finally {
       setPending(false);
       await recarregarLotes();
@@ -304,7 +305,7 @@ export default function EnvaseClient({
       }
     } catch (e) {
       setFaltas(null);
-      setErrorMsg(e instanceof Error ? e.message : "Erro ao concluir lote.");
+      setErrorMsg(erroTela(e, "Erro ao concluir lote."));
     } finally {
       setPending(false);
       await recarregarLotes();
@@ -434,7 +435,7 @@ export default function EnvaseClient({
       const data = await getHistoricoEnvases();
       setHistorico(data);
     } catch (e) {
-      setHistoricoError(e instanceof Error ? e.message : "Erro ao carregar histórico.");
+      setHistoricoError(erroTela(e, "Erro ao carregar histórico."));
     } finally {
       setHistoricoLoading(false);
     }

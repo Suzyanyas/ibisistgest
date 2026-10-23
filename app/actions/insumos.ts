@@ -6,6 +6,7 @@ import { getCurrentUser, getUserRole, requireAdmin } from "@/app/actions/auth-ro
 import { logAtividade } from "@/app/actions/dashboard";
 import { rpcError } from "@/lib/supabase/rpc-error";
 import { getCustosMap, writeCusto } from "@/lib/custos";
+import { ErroAcao, erroBanco, executar, type ResultadoAcao } from "@/lib/acao";
 import type { Tables } from "@/types/supabase";
 
 type InsumoSemCusto = Omit<Tables<"insumos">, "custo_unitario" | "custo_unidade">;
@@ -18,10 +19,11 @@ export type InsumoWithFlag = InsumoSemCusto & {
 };
 export type Movimento = Tables<"insumo_movimentos">;
 
-// O dashboard (card de pendências) e o estoque dependem destes dados
+// O dashboard (card de pendências) depende destes dados. A tela de estoque não é revalidada:
+// ela guarda a lista em estado e recarrega por conta própria; revalidá-la faria o servidor
+// renderizar a página dentro da resposta da action, só para o cliente descartar o resultado.
 function revalidarInsumos() {
   revalidatePath("/");
-  revalidatePath("/estoque-insumos");
 }
 
 // Colunas de insumos sem os custos (custos vêm de insumo_custos, só para admin)
@@ -66,26 +68,28 @@ export async function createInsumo(payload: {
   tipo?: "producao" | "material";
   categoria?: string | null;
   densidade?: number | null;
-}): Promise<void> {
-  const supabase = await createClient();
-  const user = await getCurrentUser();
-  // Custos só são enviados por administradores; para os demais são ignorados
-  const isAdmin = (await getUserRole()) === "admin";
-  const { error } = await supabase.rpc("criar_insumo", {
-    p_nome: payload.nome,
-    p_unidade: payload.unidade,
-    p_tipo: payload.tipo ?? "producao",
-    p_categoria: payload.categoria ?? null,
-    p_densidade: payload.densidade ?? null,
-    p_estoque_inicial: payload.estoque_inicial ?? payload.estoque_atual ?? 0,
-    p_estoque_seguranca: payload.estoque_seguranca,
-    p_custo_unitario: isAdmin ? (payload.custo_unitario ?? null) : null,
-    p_custo_unidade: isAdmin ? (payload.custo_unidade ?? null) : null,
-    p_user_id: user?.id ?? null,
-    p_user_email: user?.email ?? null,
+}): Promise<ResultadoAcao> {
+  return executar("createInsumo", async () => {
+    const supabase = await createClient();
+    const [user, role] = await Promise.all([getCurrentUser(), getUserRole()]);
+    // Custos só são enviados por administradores; para os demais são ignorados
+    const isAdmin = role === "admin";
+    const { error } = await supabase.rpc("criar_insumo", {
+      p_nome: payload.nome,
+      p_unidade: payload.unidade,
+      p_tipo: payload.tipo ?? "producao",
+      p_categoria: payload.categoria ?? null,
+      p_densidade: payload.densidade ?? null,
+      p_estoque_inicial: payload.estoque_inicial ?? payload.estoque_atual ?? 0,
+      p_estoque_seguranca: payload.estoque_seguranca,
+      p_custo_unitario: isAdmin ? (payload.custo_unitario ?? null) : null,
+      p_custo_unidade: isAdmin ? (payload.custo_unidade ?? null) : null,
+      p_user_id: user?.id ?? null,
+      p_user_email: user?.email ?? null,
+    });
+    if (error) throw rpcError(error);
+    revalidarInsumos();
   });
-  if (error) throw rpcError(error);
-  revalidarInsumos();
 }
 
 export async function novaEntrada(
@@ -94,20 +98,22 @@ export async function novaEntrada(
   data: string,
   obs?: string,
   unidade?: string
-): Promise<void> {
-  const supabase = await createClient();
-  const user = await getCurrentUser();
-  const { error } = await supabase.rpc("registrar_entrada_insumo", {
-    p_insumo_id: insumo_id,
-    p_quantidade: quantidade,
-    p_unidade: unidade ?? null,
-    p_data: data,
-    p_obs: obs ?? null,
-    p_user_id: user?.id ?? null,
-    p_user_email: user?.email ?? null,
+): Promise<ResultadoAcao> {
+  return executar("novaEntrada", async () => {
+    const supabase = await createClient();
+    const user = await getCurrentUser();
+    const { error } = await supabase.rpc("registrar_entrada_insumo", {
+      p_insumo_id: insumo_id,
+      p_quantidade: quantidade,
+      p_unidade: unidade ?? null,
+      p_data: data,
+      p_obs: obs ?? null,
+      p_user_id: user?.id ?? null,
+      p_user_email: user?.email ?? null,
+    });
+    if (error) throw rpcError(error);
+    revalidarInsumos();
   });
-  if (error) throw rpcError(error);
-  revalidarInsumos();
 }
 
 export async function atualizarEstoque(
@@ -115,25 +121,24 @@ export async function atualizarEstoque(
   quantidade_nova: number,
   data: string,
   obs?: string
-): Promise<void> {
-  const supabase = await createClient();
-  const user = await getCurrentUser();
-  const { error } = await supabase.rpc("registrar_ajuste_insumo", {
-    p_insumo_id: insumo_id,
-    p_novo_total: quantidade_nova,
-    p_data: data,
-    p_obs: obs ?? null,
-    p_user_id: user?.id ?? null,
-    p_user_email: user?.email ?? null,
+): Promise<ResultadoAcao> {
+  return executar("atualizarEstoque", async () => {
+    const supabase = await createClient();
+    const user = await getCurrentUser();
+    const { error } = await supabase.rpc("registrar_ajuste_insumo", {
+      p_insumo_id: insumo_id,
+      p_novo_total: quantidade_nova,
+      p_data: data,
+      p_obs: obs ?? null,
+      p_user_id: user?.id ?? null,
+      p_user_email: user?.email ?? null,
+    });
+    if (error) throw rpcError(error);
+    revalidarInsumos();
   });
-  if (error) throw rpcError(error);
-  revalidarInsumos();
 }
 
-export async function confirmarDensidade(
-  insumo_id: string,
-  densidade: number
-): Promise<void> {
+async function gravarDensidade(insumo_id: string, densidade: number): Promise<void> {
   await requireAdmin();
   const supabase = await createClient();
   const user = await getCurrentUser();
@@ -147,14 +152,23 @@ export async function confirmarDensidade(
   revalidarInsumos();
 }
 
+export async function confirmarDensidade(
+  insumo_id: string,
+  densidade: number
+): Promise<ResultadoAcao> {
+  return executar("confirmarDensidade", () => gravarDensidade(insumo_id, densidade));
+}
+
 export async function updateCustoInsumo(
   id: string,
   custo_unitario: number,
   custo_unidade: string
-): Promise<void> {
-  await requireAdmin();
-  const supabase = await createClient();
-  await writeCusto(supabase, id, custo_unitario, custo_unidade);
+): Promise<ResultadoAcao> {
+  return executar("updateCustoInsumo", async () => {
+    await requireAdmin();
+    const supabase = await createClient();
+    await writeCusto(supabase, id, custo_unitario, custo_unidade);
+  });
 }
 
 const CATEGORIAS_VALIDAS = [
@@ -179,83 +193,77 @@ export async function updateInsumo(
   custo_unidade?: string,
   categoria?: string | null,
   densidade?: number | null
-): Promise<void> {
-  if (categoria !== undefined && categoria !== null && !CATEGORIAS_VALIDAS.includes(categoria)) {
-    throw new Error("Categoria inválida.");
-  }
-  const supabase = await createClient();
-  const user = await getCurrentUser();
-  const isAdmin = (await getUserRole()) === "admin";
-  if (isAdmin && densidade != null && (!Number.isFinite(densidade) || densidade <= 0)) {
-    throw new Error("Densidade inválida: deve ser maior que zero.");
-  }
-  const { error } = await supabase
-    .from("insumos")
-    .update({
-      nome,
-      unidade,
-      estoque_seguranca,
-      ...(categoria !== undefined ? { categoria } : {}),
-    })
-    .eq("id", id);
-  if (error) throw new Error(error.message);
-  if (isAdmin && densidade != null) {
-    const { data: atual, error: atualError } = await supabase
+): Promise<ResultadoAcao> {
+  return executar("updateInsumo", async () => {
+    if (categoria !== undefined && categoria !== null && !CATEGORIAS_VALIDAS.includes(categoria)) {
+      throw new ErroAcao("Categoria inválida.");
+    }
+    const supabase = await createClient();
+    const [user, role] = await Promise.all([getCurrentUser(), getUserRole()]);
+    const isAdmin = role === "admin";
+    if (isAdmin && densidade != null && (!Number.isFinite(densidade) || densidade <= 0)) {
+      throw new ErroAcao("Densidade inválida: deve ser maior que zero.");
+    }
+    const { error } = await supabase
       .from("insumos")
-      .select("densidade")
-      .eq("id", id)
-      .single();
-    if (atualError) throw new Error(atualError.message);
-    if (atual.densidade !== densidade) await confirmarDensidade(id, densidade);
-  }
-  // Custos só são gravados por administradores; para os demais são ignorados
-  if (custo_unitario !== undefined && (await getUserRole()) === "admin") {
-    await writeCusto(supabase, id, custo_unitario, custo_unidade);
-  }
-  await logAtividade("Edição de insumo", nome, user?.id, user?.email);
-  revalidarInsumos();
+      .update({
+        nome,
+        unidade,
+        estoque_seguranca,
+        ...(categoria !== undefined ? { categoria } : {}),
+      })
+      .eq("id", id);
+    if (error) erroBanco("updateInsumo", error);
+    if (isAdmin && densidade != null) {
+      const { data: atual, error: atualError } = await supabase
+        .from("insumos")
+        .select("densidade")
+        .eq("id", id)
+        .single();
+      if (atualError) erroBanco("updateInsumo.densidade", atualError);
+      if (atual!.densidade !== densidade) await gravarDensidade(id, densidade);
+    }
+    // Custos só são gravados por administradores; para os demais são ignorados
+    if (custo_unitario !== undefined && isAdmin) {
+      await writeCusto(supabase, id, custo_unitario, custo_unidade);
+    }
+    await logAtividade("Edição de insumo", nome, user?.id, user?.email);
+    revalidarInsumos();
+  });
 }
 
-export async function deleteInsumo(id: string): Promise<void> {
-  const supabase = await createClient();
-  const user = await getCurrentUser();
+export async function deleteInsumo(id: string): Promise<ResultadoAcao> {
+  return executar("deleteInsumo", async () => {
+    const supabase = await createClient();
+    const user = await getCurrentUser();
 
-  // Lê nome e unidade antes de qualquer exclusão, para o histórico
-  const { data: insumoInfo, error: infoError } = await supabase
-    .from("insumos")
-    .select("nome, unidade")
-    .eq("id", id)
-    .maybeSingle();
-  if (infoError) throw new Error(infoError.message);
-  if (!insumoInfo) throw new Error("Este insumo já não existe.");
+    // Lê nome e unidade antes de qualquer exclusão, para o histórico; as três
+    // consultas são independentes e rodam juntas
+    const [infoRes, loteRes, formulaRes] = await Promise.all([
+      supabase.from("insumos").select("nome, unidade").eq("id", id).maybeSingle(),
+      supabase.from("lote_insumos").select("id", { count: "exact", head: true }).eq("insumo_id", id),
+      supabase.from("formula_insumos").select("id", { count: "exact", head: true }).eq("insumo_id", id),
+    ]);
+    if (infoRes.error) erroBanco("deleteInsumo.info", infoRes.error);
+    if (loteRes.error) erroBanco("deleteInsumo.lotes", loteRes.error);
+    if (formulaRes.error) erroBanco("deleteInsumo.formulas", formulaRes.error);
+    const insumoInfo = infoRes.data;
+    if (!insumoInfo) throw new ErroAcao("Este insumo já não existe.");
 
-  const { count: loteCount, error: loteError } = await supabase
-    .from("lote_insumos")
-    .select("id", { count: "exact", head: true })
-    .eq("insumo_id", id);
-  if (loteError) throw new Error(loteError.message);
+    if ((loteRes.count ?? 0) > 0 || (formulaRes.count ?? 0) > 0) {
+      throw new ErroAcao("Este insumo está a ser usado em fórmulas ou lotes e não pode ser excluído.");
+    }
 
-  const { count: formulaCount, error: formulaError } = await supabase
-    .from("formula_insumos")
-    .select("id", { count: "exact", head: true })
-    .eq("insumo_id", id);
-  if (formulaError) throw new Error(formulaError.message);
+    const { error } = await supabase.from("insumos").delete().eq("id", id);
+    if (error) erroBanco("deleteInsumo", error);
 
-  if ((loteCount ?? 0) > 0 || (formulaCount ?? 0) > 0) {
-    throw new Error(
-      "Este insumo está a ser usado em fórmulas ou lotes e não pode ser excluído."
-    );
-  }
-
-  const { error } = await supabase.from("insumos").delete().eq("id", id);
-  if (error) throw new Error(error.message);
-
-  const nome = insumoInfo.nome?.trim();
-  const unidade = insumoInfo.unidade?.trim();
-  if (nome && unidade) {
-    await logAtividade("Exclusão de insumo", `${nome} (${unidade})`, user?.id, user?.email);
-  }
-  revalidarInsumos();
+    const nome = insumoInfo.nome?.trim();
+    const unidade = insumoInfo.unidade?.trim();
+    if (nome && unidade) {
+      await logAtividade("Exclusão de insumo", `${nome} (${unidade})`, user?.id, user?.email);
+    }
+    revalidarInsumos();
+  });
 }
 
 export async function getInsumosAbaixoMinimo(): Promise<{

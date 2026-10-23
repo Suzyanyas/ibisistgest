@@ -6,6 +6,14 @@ import { rpcError } from "@/lib/supabase/rpc-error";
 import { revalidatePath } from "next/cache";
 import type { Tables } from "@/types/supabase";
 import type { RpcResultadoFalta } from "@/types/rpc";
+import {
+  ErroAcao,
+  erroBanco,
+  executar,
+  falha,
+  type ResultadoAcao,
+  type ResultadoDado,
+} from "@/lib/acao";
 
 export type LoteRow = Tables<"lotes_producao">;
 export type LoteInsumoRow = Tables<"lote_insumos">;
@@ -67,47 +75,51 @@ export async function createLote(
   data_producao: string,
   insumoOverrides?: Array<{ insumo_id: string; quantidade: number; unidade: string }>,
   fragancia?: string
-): Promise<LoteRow> {
-  const supabase = await createClient();
-  const user = await getCurrentUser();
-  const { data: loteId, error } = await supabase.rpc("criar_lote", {
-    p_formula_id: formula_id,
-    p_numero_lote: numero_lote,
-    p_data_producao: data_producao,
-    p_fragancia: fragancia || null,
-    // lista vazia: a função usa os insumos da fórmula
-    p_insumos: insumoOverrides ?? [],
-    p_user_id: user?.id ?? null,
-    p_user_email: user?.email ?? null,
-  });
-  if (error) throw rpcError(error);
+): Promise<ResultadoDado<LoteRow>> {
+  return executar("createLote", async () => {
+    const supabase = await createClient();
+    const user = await getCurrentUser();
+    const { data: loteId, error } = await supabase.rpc("criar_lote", {
+      p_formula_id: formula_id,
+      p_numero_lote: numero_lote,
+      p_data_producao: data_producao,
+      p_fragancia: fragancia || null,
+      // lista vazia: a função usa os insumos da fórmula
+      p_insumos: insumoOverrides ?? [],
+      p_user_id: user?.id ?? null,
+      p_user_email: user?.email ?? null,
+    });
+    if (error) throw rpcError(error);
 
-  const { data: lote, error: loteError } = await supabase
-    .from("lotes_producao")
-    .select("*")
-    .eq("id", loteId as string)
-    .single();
-  if (loteError) throw new Error(loteError.message);
-  return lote;
+    const { data: lote, error: loteError } = await supabase
+      .from("lotes_producao")
+      .select("*")
+      .eq("id", loteId as string)
+      .single();
+    if (loteError) erroBanco("createLote.lote", loteError);
+    return lote!;
+  });
 }
 
-export async function deleteLote(id: string): Promise<void> {
-  const supabase = await createClient();
+export async function deleteLote(id: string): Promise<ResultadoAcao> {
+  return executar("deleteLote", async () => {
+    const supabase = await createClient();
 
-  const { count: produtoCount, error: produtoError } = await supabase
-    .from("produtos_acabados")
-    .select("id", { count: "exact", head: true })
-    .eq("lote_id", id);
-  if (produtoError) throw new Error(produtoError.message);
+    const { count: produtoCount, error: produtoError } = await supabase
+      .from("produtos_acabados")
+      .select("id", { count: "exact", head: true })
+      .eq("lote_id", id);
+    if (produtoError) erroBanco("deleteLote.produtos", produtoError);
 
-  if ((produtoCount ?? 0) > 0) {
-    throw new Error(
-      "Este lote está vinculado a um produto acabado e não pode ser excluído."
-    );
-  }
+    if ((produtoCount ?? 0) > 0) {
+      throw new ErroAcao(
+        "Este lote está vinculado a um produto acabado e não pode ser excluído."
+      );
+    }
 
-  const { error } = await supabase.from("lotes_producao").delete().eq("id", id);
-  if (error) throw rpcError(error);
+    const { error } = await supabase.from("lotes_producao").delete().eq("id", id);
+    if (error) throw rpcError(error);
+  });
 }
 
 export async function addInsumoToLote(
@@ -115,56 +127,67 @@ export async function addInsumoToLote(
   insumo_id: string,
   quantidade: number,
   unidade: string
-): Promise<void> {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("lote_insumos")
-    .insert({ lote_id, insumo_id, quantidade, unidade });
-  if (error) throw rpcError(error);
+): Promise<ResultadoAcao> {
+  return executar("addInsumoToLote", async () => {
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("lote_insumos")
+      .insert({ lote_id, insumo_id, quantidade, unidade });
+    if (error) throw rpcError(error);
+  });
 }
 
-export async function removeInsumoFromLote(id: string): Promise<void> {
-  const supabase = await createClient();
-  const { error } = await supabase.from("lote_insumos").delete().eq("id", id);
-  if (error) throw rpcError(error);
+export async function removeInsumoFromLote(id: string): Promise<ResultadoAcao> {
+  return executar("removeInsumoFromLote", async () => {
+    const supabase = await createClient();
+    const { error } = await supabase.from("lote_insumos").delete().eq("id", id);
+    if (error) throw rpcError(error);
+  });
 }
 
 export async function updateInsumoLote(
   id: string,
   quantidade: number,
   unidade: string
-): Promise<void> {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("lote_insumos")
-    .update({ quantidade, unidade })
-    .eq("id", id);
-  if (error) throw rpcError(error);
+): Promise<ResultadoAcao> {
+  return executar("updateInsumoLote", async () => {
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("lote_insumos")
+      .update({ quantidade, unidade })
+      .eq("id", id);
+    if (error) throw rpcError(error);
+  });
 }
+
+export type MoverLoteResultado = RpcResultadoFalta | { ok: false; error: string };
 
 export async function moverLoteParaEnvase(
   loteId: string,
   confirmarFalta: boolean
-): Promise<RpcResultadoFalta> {
-  const supabase = await createClient();
-  const user = await getCurrentUser();
-  // a função regista a atividade e os movimentos por conta própria
-  const { data, error } = await supabase.rpc("mover_lote_para_envase", {
-    p_lote_id: loteId,
-    p_confirmar_falta: confirmarFalta,
-    p_user_id: user?.id ?? null,
-    p_user_email: user?.email ?? null,
-  });
-  if (error) throw rpcError(error);
+): Promise<MoverLoteResultado> {
+  try {
+    const supabase = await createClient();
+    const user = await getCurrentUser();
+    // a função regista a atividade e os movimentos por conta própria
+    const { data, error } = await supabase.rpc("mover_lote_para_envase", {
+      p_lote_id: loteId,
+      p_confirmar_falta: confirmarFalta,
+      p_user_id: user?.id ?? null,
+      p_user_email: user?.email ?? null,
+    });
+    if (error) throw rpcError(error);
 
-  const resultado = data as unknown as RpcResultadoFalta;
-  if (resultado.ok) {
-    revalidatePath("/");
-    revalidatePath("/producao");
-    revalidatePath("/envase");
-    revalidatePath("/estoque-insumos");
+    const resultado = data as unknown as RpcResultadoFalta;
+    if (resultado.ok) {
+      revalidatePath("/");
+      revalidatePath("/envase");
+      revalidatePath("/estoque-insumos");
+    }
+    return resultado;
+  } catch (e) {
+    return falha("moverLoteParaEnvase", e);
   }
-  return resultado;
 }
 
 export async function getFormulasList(): Promise<FormulaBasic[]> {
@@ -196,16 +219,24 @@ export async function updateLote(
   numero_lote: string,
   data_producao: string,
   fragancia?: string
-): Promise<LoteRow> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("lotes_producao")
-    .update({ numero_lote, data_producao, fragancia: fragancia || null })
-    .eq("id", id)
-    .select()
-    .single();
-  if (error) throw new Error(error.message);
-  return data;
+): Promise<ResultadoDado<LoteRow>> {
+  return executar("updateLote", async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("lotes_producao")
+      .update({ numero_lote, data_producao, fragancia: fragancia || null })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) {
+      if (error.code === "23505") {
+        console.error("[db:updateLote]", error);
+        throw new ErroAcao("Já existe um lote com este número.");
+      }
+      erroBanco("updateLote", error);
+    }
+    return data!;
+  });
 }
 
 export async function getInsumosList(

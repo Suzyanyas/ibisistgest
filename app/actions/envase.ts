@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/app/actions/auth-role";
 import { revalidatePath } from "next/cache";
 import { rpcError } from "@/lib/supabase/rpc-error";
+import { falha } from "@/lib/acao";
 import type { FaltaItem } from "@/types/rpc";
 import type { Tables } from "@/types/supabase";
 
@@ -83,7 +84,7 @@ export async function getEnvaseByLote(
 }
 
 // Rascunho: grava as quantidades de um lote que ainda está em envase.
-export async function saveEnvase(
+async function saveEnvaseInterno(
   lote_id: string,
   qtd_200ml: number,
   qtd_500ml: number,
@@ -155,6 +156,16 @@ export async function saveEnvase(
   return { ok: true };
 }
 
+export async function saveEnvase(
+  ...args: Parameters<typeof saveEnvaseInterno>
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    return await saveEnvaseInterno(...args);
+  } catch (e) {
+    return falha("saveEnvase", e);
+  }
+}
+
 export type LoteInsumoItem = {
   nome: string;
   quantidade: number;
@@ -205,7 +216,7 @@ export type ConcluirEnvaseResultado =
   | { ok: false; error: string };
 
 // Salva e conclui o envase numa única transação da base (função concluir_envase).
-export async function concluirEnvaseV2(
+async function concluirEnvaseInterno(
   input: ConcluirEnvaseInput
 ): Promise<ConcluirEnvaseResultado> {
   const supabase = await createClient();
@@ -236,13 +247,24 @@ export async function concluirEnvaseV2(
 
   const r = result as { ok?: boolean; faltas?: FaltaItem[] } | null;
   if (r?.ok === true) {
-    for (const path of ["/", "/envase", "/producao", "/produto-acabado", "/estoque-insumos"]) {
+    // /envase fica de fora: a tela recarrega os lotes por conta própria
+    for (const path of ["/", "/producao", "/produto-acabado", "/estoque-insumos"]) {
       revalidatePath(path);
     }
     return { ok: true };
   }
   if (r?.faltas && r.faltas.length > 0) return { ok: false, faltas: r.faltas };
   return { ok: false, error: "Resposta inesperada ao concluir o envase." };
+}
+
+export async function concluirEnvaseV2(
+  input: ConcluirEnvaseInput
+): Promise<ConcluirEnvaseResultado> {
+  try {
+    return await concluirEnvaseInterno(input);
+  } catch (e) {
+    return falha("concluirEnvaseV2", e);
+  }
 }
 
 export type EmbalagemDisponivel = {

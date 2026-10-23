@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { erroTela } from "@/lib/erro-tela";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2, Search, AlertTriangle } from "lucide-react";
 import {
@@ -216,7 +217,6 @@ export default function EstoqueInsumosClient({
   foco: FocoPendencia;
 }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
 
   const [insumos, setInsumos] = useState<InsumoWithFlag[]>(initialInsumos);
   const [searchQuery, setSearchQuery] = useState("");
@@ -252,7 +252,7 @@ export default function EstoqueInsumosClient({
       const data = await getInsumos(tab);
       setInsumos(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao carregar insumos.");
+      setError(erroTela(e, "Erro ao carregar insumos."));
     } finally {
       setLoadingTab(false);
     }
@@ -270,7 +270,7 @@ export default function EstoqueInsumosClient({
 
   // ── Save pending (evita duplo clique em SALVAR) ──
   const [saving, setSaving] = useState(false);
-  const busy = isPending || saving;
+  const busy = saving;
   async function comSalvando(fn: () => Promise<void>) {
     if (saving) return;
     setSaving(true);
@@ -393,7 +393,7 @@ export default function EstoqueInsumosClient({
       const data = await getMovimentos(insumo.id);
       setMovimentos(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao buscar histórico.");
+      setError(erroTela(e, "Erro ao buscar histórico."));
     } finally {
       setLoadingMovimentos(false);
     }
@@ -408,7 +408,7 @@ export default function EstoqueInsumosClient({
       const data = await getInsumosAbaixoMinimo();
       setRelatorio(data);
     } catch (e) {
-      setRelatorioError(e instanceof Error ? e.message : "Erro ao gerar relatório.");
+      setRelatorioError(erroTela(e, "Erro ao gerar relatório."));
     } finally {
       setRelatorioLoading(false);
     }
@@ -503,7 +503,7 @@ export default function EstoqueInsumosClient({
 
       doc.save(`estoque-baixo-${today()}.pdf`);
     } catch (e) {
-      setRelatorioError(e instanceof Error ? e.message : "Erro ao gerar PDF.");
+      setRelatorioError(erroTela(e, "Erro ao gerar PDF."));
     } finally {
       setPdfLoading(false);
     }
@@ -513,12 +513,6 @@ export default function EstoqueInsumosClient({
     const text = buildRelatorioText();
     const encoded = encodeURIComponent(text);
     window.open(`https://wa.me/?text=${encoded}`, "_blank");
-  }
-
-  function refreshInsumos() {
-    startTransition(() => {
-      router.refresh();
-    });
   }
 
   // ── Pendências do dashboard: ?focus=<id>&acao=densidade|ajuste|editar|novo ──
@@ -573,7 +567,7 @@ export default function EstoqueInsumosClient({
     const densidade = isAdmin ? parseDensidade(novoDensidade) : undefined;
     if (densidade === null) return setError("Densidade inválida: deve ser maior que zero.");
     try {
-      await createInsumo({
+      const r = await createInsumo({
         nome: novoNome.trim(),
         unidade: novoUnidade,
         estoque_atual: atual,
@@ -584,29 +578,12 @@ export default function EstoqueInsumosClient({
         categoria: novoCategoria || null,
         densidade: densidade ?? null,
       });
-      const novoItem: InsumoWithFlag = {
-        id: crypto.randomUUID(),
-        created_at: null,
-        categoria: novoCategoria || null,
-        nome: novoNome.trim(),
-        unidade: novoUnidade,
-        estoque_atual: atual,
-        estoque_seguranca: seg,
-        custo_unitario: custo,
-        custo_unidade: novoCustoUnidade,
-        densidade: densidade ?? null,
-        densidade_confirmada: false,
-        estoque_estimado: false,
-        tipo: activeTab,
-        estoque_baixo: atual <= seg,
-      };
-      setInsumos((prev) =>
-        [...prev, novoItem].sort((a, b) => a.nome.localeCompare(b.nome))
-      );
+      if (!r.ok) return setError(r.error);
       closeModal();
-      refreshInsumos();
+      // recarrega a lista real (o id do novo insumo vem do banco)
+      await handleTabChange(activeTab, true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao salvar.");
+      setError(erroTela(e, "Erro ao salvar."));
     }
   }
 
@@ -619,7 +596,8 @@ export default function EstoqueInsumosClient({
     const convertida = converterUnidade(qtd, entradaUnidade, selected.unidade, selected.densidade);
     if (convertida === null) return setError("Unidade incompatível com este insumo.");
     try {
-      await novaEntrada(selected.id, qtd, entradaData, entradaObs || undefined, entradaUnidade);
+      const r = await novaEntrada(selected.id, qtd, entradaData, entradaObs || undefined, entradaUnidade);
+      if (!r.ok) return setError(r.error);
       const novoAtual = selected.estoque_atual + convertida;
       setInsumos((prev) =>
         prev.map((ins) =>
@@ -633,9 +611,8 @@ export default function EstoqueInsumosClient({
         )
       );
       closeModal();
-      refreshInsumos();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao salvar.");
+      setError(erroTela(e, "Erro ao salvar."));
     }
   }
 
@@ -646,7 +623,8 @@ export default function EstoqueInsumosClient({
     const qtd = parseFloat(atuQtd);
     if (isNaN(qtd) || qtd < 0) return setError("Quantidade deve ser válida.");
     try {
-      await atualizarEstoque(selected.id, qtd, atuData, atuObs || undefined);
+      const r = await atualizarEstoque(selected.id, qtd, atuData, atuObs || undefined);
+      if (!r.ok) return setError(r.error);
       setInsumos((prev) =>
         prev.map((ins) =>
           ins.id === selected.id
@@ -659,9 +637,8 @@ export default function EstoqueInsumosClient({
         )
       );
       closeModal();
-      refreshInsumos();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao salvar.");
+      setError(erroTela(e, "Erro ao salvar."));
     }
   }
 
@@ -682,7 +659,7 @@ export default function EstoqueInsumosClient({
     const densidade = isAdmin ? parseDensidade(editDensidade) : undefined;
     if (densidade === null) return setError("Densidade inválida: deve ser maior que zero.");
     try {
-      await updateInsumo(
+      const r = await updateInsumo(
         selected.id,
         editNome.trim(),
         editUnidade,
@@ -692,10 +669,11 @@ export default function EstoqueInsumosClient({
         editCategoria || null,
         densidade
       );
+      if (!r.ok) return setError(r.error);
       closeModal();
       await handleTabChange(activeTab, true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao salvar.");
+      setError(erroTela(e, "Erro ao salvar."));
     }
   }
 
@@ -707,13 +685,14 @@ export default function EstoqueInsumosClient({
     const d = parseDensidade(editDensidade);
     if (d == null) return setError("Densidade inválida: deve ser maior que zero.");
     try {
-      await confirmarDensidade(selected.id, d);
+      const r = await confirmarDensidade(selected.id, d);
+      if (!r.ok) return setError(r.error);
       setSelected({ ...selected, densidade: d, densidade_confirmada: true });
       setEditDensidade(String(d));
       setDensidadeMsg("Densidade confirmada.");
       await handleTabChange(activeTab, true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao confirmar densidade.");
+      setError(erroTela(e, "Erro ao confirmar densidade."));
     }
   }
 
@@ -724,11 +703,12 @@ export default function EstoqueInsumosClient({
     if (!selected) return;
     if (pin !== "1234") return setPinError("PIN incorreto");
     try {
-      await deleteInsumo(selected.id);
+      const r = await deleteInsumo(selected.id);
+      if (!r.ok) return setError(r.error);
       closeModal();
       await handleTabChange(activeTab, true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao excluir.");
+      setError(erroTela(e, "Erro ao excluir."));
     }
   }
 
@@ -1461,12 +1441,12 @@ export default function EstoqueInsumosClient({
                   CANCELAR
                 </button>
                 <button
-                  onClick={handleConfirmExcluir}
-                  disabled={isPending}
+                  onClick={() => comSalvando(handleConfirmExcluir)}
+                  disabled={busy}
                   className="px-5 py-2 rounded text-white text-sm font-semibold hover:brightness-110 transition disabled:opacity-60"
                   style={{ backgroundColor: "#C62828", cursor: "pointer", boxShadow: "0 4px 16px rgba(198,40,40,0.4)" }}
                 >
-                  {isPending ? "Excluindo..." : "EXCLUIR"}
+                  {busy ? "Excluindo..." : "EXCLUIR"}
                 </button>
               </div>
             </div>
