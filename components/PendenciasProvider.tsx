@@ -19,7 +19,7 @@ import {
   type PendenciaTipo,
   type Pendencias,
 } from "@/app/actions/dashboard";
-import { PENDENCIA_TEXTOS } from "@/lib/pendencias";
+import { PENDENCIA_TEXTOS, textoBotao } from "@/lib/pendencias";
 import { erroTela } from "@/lib/erro-tela";
 
 // ─── Contexto ────────────────────────────────────────────────────────────────
@@ -43,6 +43,15 @@ export function usePendencias(): PendenciasCtx | null {
 
 const CHAVE_BASE = "ibisist-pendencias-base";
 const INTERVALO_MIN_MS = 60_000;
+const CHAVE_INTRO = "ibisist-pendencias-intro-vista";
+
+function introJaVista(): boolean {
+  try {
+    return localStorage.getItem(CHAVE_INTRO) === "1";
+  } catch {
+    return false;
+  }
+}
 
 type ItemPlano = { tipo: PendenciaTipo; item: PendenciaItem };
 
@@ -86,6 +95,8 @@ export default function PendenciasProvider({
   const ultimaConsulta = useRef(0);
   const totalAnterior = useRef(0);
   const baseRef = useRef(0);
+  // A frase de boas-vindas aparece até a primeira pendência ser resolvida ou ignorada
+  const [introVista, setIntroVista] = useState(false);
 
   const itens = useMemo(() => achatar(pendencias), [pendencias]);
   const total = itens.length;
@@ -96,6 +107,15 @@ export default function PendenciasProvider({
     const novoTotal = p.grupos.reduce((n, g) => n + g.items.length, 0);
     const anterior = totalAnterior.current;
     totalAnterior.current = novoTotal;
+    // menos itens do que antes = algo foi resolvido ou ignorado
+    if (anterior > 0 && novoTotal < anterior) {
+      try {
+        localStorage.setItem(CHAVE_INTRO, "1");
+      } catch {
+        // sem localStorage: a frase só some nesta sessão
+      }
+      setIntroVista(true);
+    }
     setPendencias(p);
     // base = maior total visto nesta sessão; zera quando tudo foi resolvido
     const novaBase = novoTotal > 0 ? Math.max(baseRef.current, lerBase(), novoTotal) : 0;
@@ -167,6 +187,13 @@ export default function PendenciasProvider({
     return () => document.removeEventListener("visibilitychange", aoVoltar);
   }, [isAdmin, atualizar]);
 
+  // Lê a marca da introdução depois da montagem (evita diferença entre servidor e navegador)
+  useEffect(() => {
+    if (!isAdmin) return;
+    const id = setTimeout(() => setIntroVista(introJaVista()), 0);
+    return () => clearTimeout(id);
+  }, [isAdmin]);
+
   // Mensagem de sucesso some sozinha
   useEffect(() => {
     if (!sucesso) return;
@@ -211,6 +238,7 @@ export default function PendenciasProvider({
           onMinimizar={() => setAberto(false)}
           onIgnorar={aoIgnorar}
           podeIgnorar={pendencias?.podeIgnorar ?? false}
+          mostrarIntro={!introVista}
         />
       )}
       {sucesso && (
@@ -282,6 +310,7 @@ function ModalPendencias({
   onMinimizar,
   onIgnorar,
   podeIgnorar,
+  mostrarIntro,
 }: {
   itens: ItemPlano[];
   indice: number;
@@ -290,6 +319,7 @@ function ModalPendencias({
   onMinimizar: () => void;
   onIgnorar: (it: ItemPlano) => Promise<string | null>;
   podeIgnorar: boolean;
+  mostrarIntro: boolean;
 }) {
   const caixa = useRef<HTMLDivElement>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -392,6 +422,12 @@ function ModalPendencias({
         </div>
 
         <div className="px-5 pt-5 pb-6 flex flex-col gap-5">
+          {mostrarIntro && (
+            <p className="text-gray-700" style={{ fontSize: 15 }}>
+              São pequenos acertos, um de cada vez. Não precisa fazer tudo hoje.
+            </p>
+          )}
+
           {/* Progresso */}
           <div>
             <div className="flex items-baseline justify-between gap-2 mb-2">
@@ -438,6 +474,21 @@ function ModalPendencias({
                 {atual.item.detalhe}
               </p>
             )}
+            <div className="flex flex-col gap-1.5 pt-3" style={{ borderTop: "1px solid #FCD34D" }}>
+              <p className="text-sm font-bold" style={{ color: "#1A3A6B" }}>
+                Como resolver
+              </p>
+              {textos.comoResolver.map((linha) => (
+                <p key={linha} className="text-gray-700" style={{ fontSize: 15 }}>
+                  {linha}
+                </p>
+              ))}
+              {textos.seEstaCerto && atual.item.ignoravel && podeIgnorar && (
+                <p className="text-gray-700" style={{ fontSize: 15 }}>
+                  {textos.seEstaCerto}
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Ações */}
@@ -449,8 +500,11 @@ function ModalPendencias({
               className="flex items-center justify-center rounded-xl text-white font-bold text-center hover:brightness-110 transition focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300"
               style={{ minHeight: 56, backgroundColor: "#1565C0", fontSize: 17, padding: "0 16px" }}
             >
-              {atual.item.acao}
+              {textoBotao(atual.tipo, atual.item.id)}
             </Link>
+            <p className="text-center text-gray-600" style={{ fontSize: 14 }}>
+              O sistema leva você até a tela certa. Para voltar aqui, use o botão laranja Pendências.
+            </p>
             {atual.item.ignoravel && podeIgnorar && (
               <button
                 type="button"
