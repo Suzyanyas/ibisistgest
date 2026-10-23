@@ -2,17 +2,21 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentUser, requireAdmin } from "@/app/actions/auth-role";
+import { getCurrentUser, getUserRole, requireAdmin } from "@/app/actions/auth-role";
 import { logAtividade } from "@/app/actions/dashboard";
 import { rpcError } from "@/lib/supabase/rpc-error";
 import { hojeFortaleza, intervaloDiaFortaleza } from "@/lib/fortaleza";
 import type { Tables } from "@/types/supabase";
+import type { RpcResultadoMesclar, RpcResultadoOk } from "@/types/rpc";
 
 export type ProdutoAcabadoRow = Tables<"produtos_acabados">;
 export type RetiradasRow = Tables<"produto_retiradas">;
 
 export type ProdutoAcabadoWithFlag = ProdutoAcabadoRow & {
   estoque_baixo: boolean;
+  formula_nome: string | null;
+  envases_count: number;
+  retiradas_count: number;
 };
 
 export type RetiradasHoje = RetiradasRow & {
@@ -48,16 +52,45 @@ function mensagemErro(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
-export async function getProdutosAcabados(): Promise<ProdutoAcabadoWithFlag[]> {
+type ContagemEmbutida = { count: number }[] | null;
+
+function contar(c: ContagemEmbutida): number {
+  return c?.[0]?.count ?? 0;
+}
+
+// Nome da fórmula por id, em uma única consulta
+async function nomesDeFormulas(ids: (string | null)[]): Promise<Map<string, string>> {
+  const unicos = Array.from(new Set(ids.filter((id): id is string => !!id)));
+  const nomes = new Map<string, string>();
+  if (unicos.length === 0) return nomes;
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("produtos_acabados")
-    .select("*")
-    .order("nome");
+  const { data, error } = await supabase.from("formulas").select("id, nome").in("id", unicos);
   if (error) throw new Error(error.message);
-  return (data ?? []).map((p) => ({
+  for (const f of data ?? []) nomes.set(f.id, f.nome);
+  return nomes;
+}
+
+// Produtos arquivados ficam ocultos para todos; só administradores podem pedi-los.
+export async function getProdutosAcabados(
+  incluirArquivados: boolean = false
+): Promise<ProdutoAcabadoWithFlag[]> {
+  const mostrarArquivados = incluirArquivados && (await getUserRole()) === "admin";
+  const supabase = await createClient();
+  let query = supabase
+    .from("produtos_acabados")
+    .select("*, envases(count), produto_retiradas(count)")
+    .order("nome");
+  if (!mostrarArquivados) query = query.eq("ativo", true);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  const linhas = data ?? [];
+  const nomes = await nomesDeFormulas(linhas.map((p) => p.formula_id));
+  return linhas.map(({ envases, produto_retiradas, ...p }) => ({
     ...p,
-    estoque_baixo: p.estoque_atual <= p.estoque_seguranca,
+    estoque_baixo: p.ativo && p.estoque_atual <= p.estoque_seguranca,
+    formula_nome: p.formula_id ? (nomes.get(p.formula_id) ?? null) : null,
+    envases_count: contar(envases as ContagemEmbutida),
+    retiradas_count: contar(produto_retiradas as ContagemEmbutida),
   }));
 }
 
@@ -242,4 +275,184 @@ export async function getHistoricoProduto(
     .order("data_envase", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as unknown as HistoricoProdutoItem[];
+}
+
+// ─── Gestão de produtos (somente administradores) ────────────────────────────
+
+function revalidarGestaoProdutos() {
+  revalidatePath("/");
+  revalidatePath("/produto-acabado");
+  revalidatePath("/envase");
+}
+
+export type ProdutoGestaoInfo = {
+  id: string;
+  nome: string;
+  ativo: boolean;
+  estoque_seguranca: number;
+  formula: { id: string; nome: string } | null;
+  estoque_200ml: number;
+  estoque_500ml: number;
+  estoque_1l: number;
+  estoque_2l: number;
+  estoque_5l: number;
+  estoque_20l: number;
+  envases_count: number;
+  retiradas_count: number;
+};
+
+// Dados do modal Gerir para um ou dois produtos: uma consulta com as contagens agrupadas
+// (envases e retiradas embutidos) e outra para os nomes das fórmulas.
+export async function getProdutosParaGestao(
+  ids: string[]
+): Promise<{ ok: true; produtos: ProdutoGestaoInfo[] } | { ok: false; error: string }> {
+  try {
+    await requireAdmin();
+  } catch (e) {
+    return { ok: false, error: mensagemErro(e, "Apenas administradores.") };
+  }
+  const unicos = Array.from(new Set(ids.filter(Boolean)));
+  if (unicos.length === 0) return { ok: true, produtos: [] };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("produtos_acabados")
+    .select(
+      "id, nome, ativo, estoque_seguranca, formula_id, estoque_200ml, estoque_500ml, estoque_1l, estoque_2l, estoque_5l, estoque_20l, envases(count), produto_retiradas(count)"
+    )
+    .in("id", unicos);
+  if (error) return { ok: false, error: rpcError(error).message };
+
+  const linhas = data ?? [];
+  let nomes: Map<string, string>;
+  try {
+    nomes = await nomesDeFormulas(linhas.map((p) => p.formula_id));
+  } catch (e) {
+    return { ok: false, error: mensagemErro(e, "Erro ao carregar as fórmulas.") };
+  }
+  return {
+    ok: true,
+    produtos: linhas.map(({ envases, produto_retiradas, formula_id, ...p }) => ({
+      ...p,
+      formula: formula_id ? { id: formula_id, nome: nomes.get(formula_id) ?? "—" } : null,
+      envases_count: contar(envases as ContagemEmbutida),
+      retiradas_count: contar(produto_retiradas as ContagemEmbutida),
+    })),
+  };
+}
+
+export type EditarProdutoInput = {
+  id: string;
+  nome: string;
+  estoque_seguranca: number;
+  formula_id: string | null;
+  obs?: string;
+};
+
+export async function editarProduto(input: EditarProdutoInput): Promise<ResultadoAcao> {
+  try {
+    await requireAdmin();
+  } catch (e) {
+    return { ok: false, error: mensagemErro(e, "Apenas administradores.") };
+  }
+  const nome = input.nome.trim();
+  if (!nome) return { ok: false, error: "O nome do produto é obrigatório." };
+  if (!Number.isInteger(input.estoque_seguranca) || input.estoque_seguranca < 0) {
+    return {
+      ok: false,
+      error: "O estoque mínimo deve ser um número inteiro maior ou igual a zero.",
+    };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("editar_produto_acabado", {
+    p_id: input.id,
+    p_nome: nome,
+    p_estoque_seguranca: input.estoque_seguranca,
+    p_formula_id: input.formula_id || null,
+    p_obs: input.obs?.trim() || null,
+  });
+  if (error) return { ok: false, error: rpcError(error).message };
+  if ((data as RpcResultadoOk | null)?.ok !== true) {
+    return { ok: false, error: "Não foi possível concluir a operação. Tente novamente." };
+  }
+  revalidarGestaoProdutos();
+  return { ok: true };
+}
+
+export async function arquivarProduto(
+  id: string,
+  arquivar: boolean,
+  obs?: string
+): Promise<ResultadoAcao> {
+  try {
+    await requireAdmin();
+  } catch (e) {
+    return { ok: false, error: mensagemErro(e, "Apenas administradores.") };
+  }
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("arquivar_produto_acabado", {
+    p_id: id,
+    p_arquivar: arquivar,
+    p_obs: obs?.trim() || null,
+  });
+  if (error) return { ok: false, error: rpcError(error).message };
+  if ((data as RpcResultadoOk | null)?.ok !== true) {
+    return { ok: false, error: "Não foi possível concluir a operação. Tente novamente." };
+  }
+  revalidarGestaoProdutos();
+  return { ok: true };
+}
+
+export async function excluirProduto(id: string, obs?: string): Promise<ResultadoAcao> {
+  try {
+    await requireAdmin();
+  } catch (e) {
+    return { ok: false, error: mensagemErro(e, "Apenas administradores.") };
+  }
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("excluir_produto_acabado", {
+    p_id: id,
+    p_obs: obs?.trim() || null,
+  });
+  if (error) return { ok: false, error: rpcError(error).message };
+  if ((data as RpcResultadoOk | null)?.ok !== true) {
+    return { ok: false, error: "Não foi possível concluir a operação. Tente novamente." };
+  }
+  revalidarGestaoProdutos();
+  return { ok: true };
+}
+
+export type ModoMesclagem = "somar" | "manter_destino";
+
+export async function mesclarProdutos(
+  origem_id: string,
+  destino_id: string,
+  modo: ModoMesclagem,
+  obs?: string
+): Promise<ResultadoAcao> {
+  try {
+    await requireAdmin();
+  } catch (e) {
+    return { ok: false, error: mensagemErro(e, "Apenas administradores.") };
+  }
+  if (!origem_id || !destino_id) {
+    return { ok: false, error: "Selecione o produto a remover e o produto que fica." };
+  }
+  if (origem_id === destino_id) {
+    return { ok: false, error: "Escolha dois produtos diferentes para mesclar." };
+  }
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("mesclar_produtos", {
+    p_origem_id: origem_id,
+    p_destino_id: destino_id,
+    p_modo: modo,
+    p_obs: obs?.trim() || null,
+  });
+  if (error) return { ok: false, error: rpcError(error).message };
+  if ((data as RpcResultadoMesclar | null)?.ok !== true) {
+    return { ok: false, error: "Não foi possível concluir a operação. Tente novamente." };
+  }
+  revalidarGestaoProdutos();
+  return { ok: true };
 }

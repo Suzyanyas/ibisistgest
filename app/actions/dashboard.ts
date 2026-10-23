@@ -135,6 +135,7 @@ export async function getProdutosAbaixoMinimo(): Promise<ProdutoAbaixo[]> {
   const { data, error } = await supabase
     .from("produtos_acabados")
     .select("id, nome, estoque_atual, estoque_seguranca")
+    .eq("ativo", true)
     .order("nome");
   if (error) throw new Error(error.message);
   return (data ?? []).filter((p) => p.estoque_atual <= p.estoque_seguranca);
@@ -363,6 +364,7 @@ export async function getPendencias(): Promise<Pendencias> {
       .from("produtos_acabados")
       .select("id, nome, formula_id")
       .is("formula_id", null)
+      .eq("ativo", true)
       .order("nome"),
   ]);
 
@@ -492,8 +494,8 @@ export async function getPendencias(): Promise<Pendencias> {
       nome: p.nome,
       detalhe: "Sem fórmula associada",
       modulo: "produto-acabado" as const,
-      acao: "Ver produto",
-      href: linkPendencia("produto-acabado", { focus: p.id }),
+      acao: "Associar fórmula",
+      href: linkPendencia("produto-acabado", { focus: p.id, acao: "gerir" }),
     }))
   );
 

@@ -7,7 +7,7 @@ export default async function ProdutoAcabadoPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const { focus } = await searchParams;
+  const { focus, acao } = await searchParams;
   const [produtos, retiradasHoje, role] = await Promise.all([
     getProdutosAcabados(),
     getRetiradasHoje(),
@@ -19,6 +19,7 @@ export default async function ProdutoAcabadoPage({
       initialRetiradasHoje={retiradasHoje}
       isAdmin={role === "admin"}
       focusId={(Array.isArray(focus) ? focus[0] : focus) ?? null}
+      acao={(Array.isArray(acao) ? acao[0] : acao) ?? null}
     />
   );
 }

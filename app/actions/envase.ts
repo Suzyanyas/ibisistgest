@@ -300,6 +300,7 @@ export async function getProdutosDestino(lote_id: string): Promise<ProdutoDestin
   const { data, error } = await supabase
     .from("produtos_acabados")
     .select("id, nome, formula_id")
+    .eq("ativo", true)
     .or(`formula_id.eq.${lote.formula_id},formula_id.is.null`)
     .order("nome");
   if (error) throw new Error(error.message);

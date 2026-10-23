@@ -18,6 +18,8 @@ import {
 } from "@/app/actions/produto-acabado";
 import { getFormulasList, type FormulaBasic } from "@/app/actions/producao";
 import { hojeFortaleza, formatarDataBR } from "@/lib/fortaleza";
+import { Modal, Field, ErrorMsg, inputCls, SIZES, type SizeKey, type SizeValues } from "./shared";
+import GerirProdutoModal, { type GerirAba } from "./GerirProdutoModal";
 
 function formatDataEnvase(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -35,18 +37,6 @@ function formatDataEnvase(iso: string | null | undefined): string {
 
 // ─── Tamanhos ─────────────────────────────────────────────────────────────────
 
-type SizeKey = "200ml" | "500ml" | "1l" | "2l" | "5l" | "20l";
-
-const SIZES: { key: SizeKey; label: string }[] = [
-  { key: "200ml", label: "200 ML" },
-  { key: "500ml", label: "500 ML" },
-  { key: "1l", label: "1L" },
-  { key: "2l", label: "2L" },
-  { key: "5l", label: "5L" },
-  { key: "20l", label: "20L" },
-];
-
-type SizeValues = Record<SizeKey, number>;
 type SizeStrings = Record<SizeKey, string>;
 
 const ZERO: SizeValues = { "200ml": 0, "500ml": 0, "1l": 0, "2l": 0, "5l": 0, "20l": 0 };
@@ -114,73 +104,6 @@ function descreverLinha(l: LinhaRelatorio): string {
   return `${l.nome}: ${partes} (Total: ${l.total} UND)`;
 }
 
-// ─── Shared UI ────────────────────────────────────────────────────────────────
-
-function Modal({
-  title,
-  onClose,
-  children,
-  wide,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-  wide?: boolean;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
-    >
-      <div
-        className={`bg-white w-full ${wide ? "max-w-3xl" : "max-w-md"} max-h-[90vh] overflow-y-auto`}
-        style={{ borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
-      >
-        <div
-          className="flex items-center justify-between px-6 py-4 sticky top-0"
-          style={{ backgroundColor: "#1565C0", borderRadius: "12px 12px 0 0" }}
-        >
-          <h2 className="text-white font-semibold text-lg">{title}</h2>
-          <button
-            onClick={onClose}
-            className="modal-close text-white text-2xl leading-none"
-          >
-            &times;
-          </button>
-        </div>
-        <div className="px-6 py-5">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-sm font-medium" style={{ color: "#1A3A6B" }}>
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-const inputCls =
-  "border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 w-full";
-
-function ErrorMsg({ msg }: { msg: string | null }) {
-  if (!msg) return null;
-  return (
-    <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2">{msg}</p>
-  );
-}
-
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type ModalType =
@@ -189,18 +112,21 @@ type ModalType =
   | "retirada"
   | "relatorio"
   | "historico"
-  | "inventario";
+  | "inventario"
+  | "gerir";
 
 export default function ProdutoAcabadoClient({
   initialProdutos,
   initialRetiradasHoje,
   isAdmin,
   focusId,
+  acao,
 }: {
   initialProdutos: ProdutoAcabadoWithFlag[];
   initialRetiradasHoje: RetiradasHoje[];
   isAdmin: boolean;
   focusId: string | null;
+  acao: string | null;
 }) {
   const router = useRouter();
   const [produtos, setProdutos] =
@@ -210,7 +136,15 @@ export default function ProdutoAcabadoClient({
   );
   const focoTratado = useRef(false);
 
-  // Pendências do dashboard: ?focus=<produtoId> destaca a linha do produto
+  // Gerir produto (somente administradores)
+  const [gerirId, setGerirId] = useState<string | null>(null);
+  const [gerirAba, setGerirAba] = useState<GerirAba>("dados");
+  const [mostrarArquivados, setMostrarArquivados] = useState(false);
+  const [filtroSemFormula, setFiltroSemFormula] = useState(false);
+  const [filtroSemMovimento, setFiltroSemMovimento] = useState(false);
+
+  // Pendências do dashboard: ?focus=<produtoId> destaca a linha do produto;
+  // &acao=gerir abre o Gerir na aba Dados
   useEffect(() => {
     if (!focusId || focoTratado.current) return;
     focoTratado.current = true;
@@ -221,17 +155,32 @@ export default function ProdutoAcabadoClient({
           ?.scrollIntoView({ block: "center", behavior: "smooth" });
       });
       setTimeout(() => setDestaqueId(null), 4000);
+      if (acao === "gerir" && isAdmin) {
+        setTimeout(() => {
+          setGerirId(focusId);
+          setGerirAba("dados");
+          setModalError(null);
+          setModal("gerir");
+        }, 0);
+      }
     }
     router.replace("/produto-acabado", { scroll: false });
-  }, [focusId, produtos, router]);
+  }, [focusId, acao, isAdmin, produtos, router]);
   const [retiradasHoje, setRetiradasHoje] =
     useState<RetiradasHoje[]>(initialRetiradasHoje);
 
   const [searchQuery, setSearchQuery] = useState("");
   const normalize = (str: string) =>
     str.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-  const filteredProdutos = produtos.filter((p) =>
-    normalize(p.nome).includes(normalize(searchQuery))
+  const semMovimento = (p: ProdutoAcabadoWithFlag) =>
+    p.estoque_atual === 0 && p.envases_count === 0 && p.retiradas_count === 0;
+  const totalSemFormula = produtos.filter((p) => !p.formula_id).length;
+  const totalSemMovimento = produtos.filter(semMovimento).length;
+  const filteredProdutos = produtos.filter(
+    (p) =>
+      normalize(p.nome).includes(normalize(searchQuery)) &&
+      (!isAdmin || !filtroSemFormula || !p.formula_id) &&
+      (!isAdmin || !filtroSemMovimento || semMovimento(p))
   );
 
   const [modal, setModal] = useState<ModalType>(null);
@@ -276,13 +225,39 @@ export default function ProdutoAcabadoClient({
 
   // ── Refresh helpers ──
 
-  async function refreshData() {
+  async function refreshData(incluirArquivados: boolean = mostrarArquivados) {
     const [ps, rs] = await Promise.all([
-      getProdutosAcabados(),
+      getProdutosAcabados(incluirArquivados),
       getRetiradasHoje(),
     ]);
     setProdutos(ps);
     setRetiradasHoje(rs);
+  }
+
+  async function alternarArquivados() {
+    const novo = !mostrarArquivados;
+    setMostrarArquivados(novo);
+    try {
+      await refreshData(novo);
+    } catch {
+      setMostrarArquivados(!novo);
+    }
+  }
+
+  function openGerir(produto: ProdutoAcabadoWithFlag, aba: GerirAba = "dados") {
+    setGerirId(produto.id);
+    setGerirAba(aba);
+    setModalError(null);
+    setModal("gerir");
+  }
+
+  async function handleGerirConcluido() {
+    closeModal();
+    try {
+      await refreshData();
+    } catch {
+      // a operação já foi concluída; a lista atualiza na próxima visita
+    }
   }
 
   // ── Retiradas lookup ──
@@ -651,6 +626,40 @@ export default function ProdutoAcabadoClient({
         )}
       </div>
 
+      {/* Filtros de gestão (administradores) */}
+      {isAdmin && (
+        <div className="mb-4 flex gap-2 flex-wrap items-center">
+          {[
+            { label: "Sem fórmula", total: totalSemFormula, ativo: filtroSemFormula, alternar: () => setFiltroSemFormula((v) => !v) },
+            { label: "Sem movimento", total: totalSemMovimento, ativo: filtroSemMovimento, alternar: () => setFiltroSemMovimento((v) => !v) },
+          ].map((chip) => (
+            <button
+              key={chip.label}
+              onClick={chip.alternar}
+              aria-pressed={chip.ativo}
+              className="px-3 py-1 rounded-full text-sm font-semibold transition hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              style={{
+                backgroundColor: chip.ativo ? "#1565C0" : "#fff",
+                color: chip.ativo ? "#fff" : "#1565C0",
+                border: "1px solid #93C5FD",
+                cursor: "pointer",
+              }}
+            >
+              {chip.label} ({chip.total})
+            </button>
+          ))}
+          <label className="inline-flex items-center gap-2 text-sm cursor-pointer ml-2" style={{ color: "#1A3A6B" }}>
+            <input
+              type="checkbox"
+              checked={mostrarArquivados}
+              onChange={alternarArquivados}
+              className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            />
+            Mostrar arquivados
+          </label>
+        </div>
+      )}
+
       {/* Table */}
       <div className="overflow-x-auto overflow-y-auto rounded-lg shadow max-h-[calc(100vh-200px)]">
         <table className="w-full text-sm border-collapse">
@@ -748,6 +757,24 @@ export default function ProdutoAcabadoClient({
                           Inventário
                         </button>
                       )}
+                      {isAdmin && (
+                        <button
+                          onClick={() => openGerir(p)}
+                          title="Editar, mesclar, arquivar ou excluir o produto"
+                          className="text-xs font-semibold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
+                          style={{ color: "#1565C0", background: "none", border: "none", cursor: "pointer", padding: 0, marginLeft: 8 }}
+                        >
+                          Gerir
+                        </button>
+                      )}
+                      {!p.ativo && (
+                        <span
+                          className="text-xs font-semibold rounded-full px-2 py-0.5"
+                          style={{ backgroundColor: "#E5E7EB", color: "#4B5563", marginLeft: 8 }}
+                        >
+                          Arquivado
+                        </span>
+                      )}
                     </div>
                   </td>
                   {SIZES.map((s) => (
@@ -772,7 +799,9 @@ export default function ProdutoAcabadoClient({
                   <td className="px-4 py-4">
                     <button
                       onClick={() => openRetirada(p)}
-                      className="text-sm font-bold transition hover:shadow-md hover:scale-105 transition-all active:scale-95"
+                      disabled={!p.ativo}
+                      title={p.ativo ? undefined : "Produto arquivado: reative para registrar retiradas"}
+                      className="text-sm font-bold transition hover:shadow-md hover:scale-105 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                       style={
                         qtdHoje > 0
                           ? {
@@ -812,6 +841,18 @@ export default function ProdutoAcabadoClient({
           </tbody>
         </table>
       </div>
+
+      {/* ── Modal: Gerir produto (admin) ── */}
+      {modal === "gerir" && isAdmin && gerirId && (
+        <GerirProdutoModal
+          key={gerirId}
+          produtoId={gerirId}
+          abaInicial={gerirAba}
+          produtos={produtos}
+          onClose={closeModal}
+          onDone={handleGerirConcluido}
+        />
+      )}
 
       {/* ── Modal: Novo Produto ── */}
       {modal === "novoProduto" && (
